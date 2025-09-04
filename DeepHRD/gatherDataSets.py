@@ -289,7 +289,7 @@ def gatherData (files, svsPath, tilesPath):
 	countsAmbig = 0
 	samplesDone = []
 
-	for file in files.index:
+	for file in files.slide:
 		print("file:")
 		print(file)
 		try:
@@ -313,6 +313,11 @@ def gatherData (files, svsPath, tilesPath):
 
 		#try:
 		if 'sigMatrix' in globals():
+			print(f"sigmatrix index: {sigMatrix.index}")
+			print(f"sigmatrix columns: {sigMatrix.columns}")
+			print(f"file {file}")
+			print(f"sampleIndex {sampleIndex}")
+# 			sample =int(float(sampleIndex))
 			sigExposure =  sigMatrix.loc[file, "label"]
 			sigExposureSoft = sigMatrix.loc[file, "softLabel"]
 			if sigExposure > SIG_CUTOFF:
@@ -372,15 +377,13 @@ def generateDataStructures (project, projectPath, metaDataFile, tilesPath, outpu
 	SIG_CUTOFF = 29
 	SIG_CUTOFF_LOWER = 29
 
-# 	tileConversionMatrix = pd.read_csv(tileConversionFile, sep="\t", header=None, index_col=1, dtype=str)
-# 	tileConversionMatrix = tileConversionMatrix[~tileConversionMatrix.index.duplicated(keep='first')]]
-	temp_df = pd.read_csv(tileConversionFile, sep="\t", header=None, dtype=str)
-    # 2. Set clear column names.
-	temp_df.columns = ['slide_number', 'slide_name']
-    # 3. Now, set the index from the 'slide_name' column.
-	tileConversionMatrix = temp_df.set_index('slide_name')
+	# 	tileConversionMatrix = pd.read_csv(tileConversionFile, sep="\t", header=None, index_col=1, dtype=str)
+	# 	tileConversionMatrix = tileConversionMatrix[~tileConversionMatrix.index.duplicated(keep='first')]]
+	sigMatrix = pd.read_csv(metaDataFile, sep="\t", header=0, index_col='patient_files')
 
-	sigMatrix = pd.read_csv(metaDataFile, sep="\t", header=0, index_col=0)
+	temp_df = pd.read_csv(tileConversionFile, sep="\t", header=None, dtype=str)
+	temp_df.columns = ['slide_number', 'slide_name']
+	tileConversionMatrix = temp_df.set_index('slide_name')
 
 	if prediction:
 		testFiles = collectFiles(prediction)
