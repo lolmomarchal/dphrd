@@ -23,7 +23,7 @@ import os
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 from normalizeStaining import normalizeStaining
-
+from utilsPreprocessing import laplaceVariance
 
 def main ():
 	'''
@@ -59,6 +59,8 @@ def main ():
 	parser.add_argument('--val_lib', type=str, default='', help='Path to the validation datastructure. See README for more details on formatting')
 	parser.add_argument('--test_lib', type=str, default='', help='Path to the testing datastructure. See README for more details on formatting')
 	parser.add_argument('--stain_norm', action= "store_true")
+	parser.add_argument('--removeBlurry', action= "store_true")
+
 
 	parser.add_argument('--feature_vectors_train', type=str, default='', help='Path to the training feature vectors.')
 	parser.add_argument('--feature_vectors_val', type=str, default='', help='Path to the validation feature vectors.')
@@ -274,6 +276,8 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 						tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
 						tile_region = tile_region.resize((256,256),Image.BILINEAR)
 						pil_img = tile_region.convert("RGB")
+						if laplaceVariance(pil_img):
+                            continue
 						pil_img.save(img_path, "PNG", icc_profile=None)
 						if stain_norm:
 						    normalizeStaining(img_path, saveFile = img_path[:-4])

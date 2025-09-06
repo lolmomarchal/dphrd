@@ -16,6 +16,7 @@ from scipy.stats import norm
 import random
 import time
 import sys
+
 def safe_open(path):
     try:
         img = Image.open(path)
@@ -129,7 +130,7 @@ def generateFeatureVectorsUsingBestModels (i, iModels, project, projectPath, pyt
 
 
 
-def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath, maxROI, max_cpu, stain_norm, predict=False):
+def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath, maxROI, max_cpu, stain_norm, removeBlurry, predict=False):
 	for currentModel in iModels:
 		if predict:
 			if stain_norm:
@@ -137,11 +138,14 @@ def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath
                             os.path.join(projectPath, "objectiveInfo.txt") + " --slidePath " + os.path.join(projectPath, project) + " --tileConv " + \
                             os.path.join(projectPath, "slideNumberToSampleName.txt") + " --test_lib " + os.path.join(outputPath, "testData.pt") + " --feature_vectors_test " + os.path.join(outputPath, "m" + str(currentModel+1), "feature_vectors_test_5x.tsv") + \
                             " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu) + " --predict"+ " --stain_norm"
+                            if removeBlurry:
+                                roiCommand +=" --removeBlurry"
 			else:
 						roiCommand = pythonVersion + " base/pullROIs.py --project " + project + " --projectPath " + outputPath + " --output " +  os.path.join(outputPath, "m" + str(currentModel+1), "ROI") + " --objectiveFile " + \
                                             os.path.join(projectPath, "objectiveInfo.txt") + " --slidePath " + os.path.join(projectPath, project) + " --tileConv " + \
                                             os.path.join(projectPath, "slideNumberToSampleName.txt") + " --test_lib " + os.path.join(outputPath, "testData.pt") + " --feature_vectors_test " + os.path.join(outputPath, "m" + str(currentModel+1), "feature_vectors_test_5x.tsv") + \
                                             " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu) + " --predict"
+
 
 		else:
 			if stain_norm:
@@ -158,7 +162,8 @@ def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath
                                             " --train_lib " + os.path.join(outputPath, "trainData.pt") + " --feature_vectors_train " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_train.tsv") + \
                                             " --val_lib " + os.path.join(outputPath, "valData.pt") + " --feature_vectors_val " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv") + \
                                             " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu)+ " --stain_norm"
-
+         if removeBlurry:
+             roiCommand +=" --removeBlurry"
 
 		os.system(roiCommand)
 		torch.cuda.empty_cache()

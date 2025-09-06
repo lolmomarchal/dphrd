@@ -8,7 +8,7 @@ import PIL
 from PIL import Image
 import re
 import sys
-import utilsPreprocessing as util 
+import utilsPreprocessing as util
 import sys
 import skimage.morphology as sk_morphology
 import pandas as pd
@@ -174,7 +174,7 @@ def filter_green_channel(np_img, green_thresh=200, avoid_overmask=True, overmask
 	Returns:
 		NumPy array representing a mask where pixels above a particular green channel threshold have been masked out.
 	"""
-	
+
 	g = np_img[:, :, 1]
 	gr_ch_mask = (g < green_thresh) & (g > 0)
 	mask_percentage = util.mask_percent(gr_ch_mask)
@@ -433,7 +433,7 @@ def filter_remove_small_objects(np_img, min_size=3000, avoid_overmask=True, over
 	rem_sm = np_img.astype(bool)  # make sure mask is boolean
 
 	rem_sm = sk_morphology.remove_small_objects(rem_sm, min_size=min_size)
-	
+
 	mask_percentage = util.mask_percent(rem_sm)
 	if (mask_percentage >= overmask_thresh) and (min_size >= 1) and (avoid_overmask is True):
 		new_min_size = min_size / 2
@@ -465,27 +465,27 @@ def apply_image_filters(np_img, slide_num=None, info=None, save=False):
 	Returns:
 		Resulting filtered image as a NumPy array.
 	"""
-	
+
 	rgb = np_img
-		
+
 	mask_not_green = filter_green_channel(rgb)
 	rgb_not_green = util.mask_rgb(rgb, mask_not_green)
-	
+
 	mask_not_gray = filter_grays(rgb)
 	rgb_not_gray = util.mask_rgb(rgb, mask_not_gray)
 
 	mask_no_red_pen = filter_red_pen(rgb)
 	rgb_no_red_pen = util.mask_rgb(rgb, mask_no_red_pen)
-	
-	mask_no_green_pen = filter_green_pen(rgb)	
+
+	mask_no_green_pen = filter_green_pen(rgb)
 	rgb_no_green_pen = util.mask_rgb(rgb, mask_no_green_pen)
-	
+
 	mask_no_blue_pen = filter_blue_pen(rgb)
 	rgb_no_blue_pen = util.mask_rgb(rgb, mask_no_blue_pen)
 
 	mask_gray_green_pens = mask_not_gray & mask_not_green & mask_no_red_pen & mask_no_green_pen & mask_no_blue_pen
 	rgb_gray_green_pens = util.mask_rgb(rgb, mask_gray_green_pens)
-	
+
 	mask_remove_small = filter_remove_small_objects(mask_gray_green_pens, min_size=500, output_type="bool")
 	rgb_remove_small = util.mask_rgb(rgb, mask_remove_small)
 
@@ -502,7 +502,7 @@ def training_slide_to_image(slide_number, slide):
 	"""
 
 	img, large_w, large_h, new_w, new_h = slide_to_scaled_pil_image(slide_number, slide)
-	
+
 	img_path = util.getTrainingImagePath(slide_number, DEST_TRAIN_DIR, TRAIN_PREFIX, DEST_TRAIN_EXT, SCALE_FACTOR,  large_w, large_h, new_w, new_h)
 	if not os.path.exists(DEST_TRAIN_DIR):
 		os.makedirs(DEST_TRAIN_DIR)
@@ -523,9 +523,9 @@ def slide_to_scaled_pil_image(slide_number, slide):
 	slide_filepath = os.path.join(SRC_TRAIN_DIR, slide)
 	slide = util.openSlide(slide_filepath)
 
-	
+
 	large_w, large_h = slide.dimensions
-	
+
 	new_w = math.floor(large_w / SCALE_FACTOR)
 	new_h = math.floor(large_h / SCALE_FACTOR)
 
@@ -570,11 +570,11 @@ def apply_filters_to_image(slide_num, save=True):
 		os.makedirs(FILTER_DIR)
 	print(f"[DEBUG] In worker for slide {slide_num}, Image.MAX_IMAGE_PIXELS is {Image.MAX_IMAGE_PIXELS}")
 
-	
+
 	img_path = util.getTrainingImagePath(slide_num, DEST_TRAIN_DIR, TRAIN_PREFIX, DEST_TRAIN_EXT, SCALE_FACTOR)#,  large_w, large_h, new_w, new_h)
 	np_orig = util.open_image_np(img_path)
 	filtered_np_img = apply_image_filters(np_orig, slide_num, info, save=False)
-	
+
 	if save:
 		result_path = get_filter_image_result(slide_num)
 		print(f"[DEBUG] Saving filtered image for slide {slide_num} to: {result_path}") # Correct location
@@ -837,14 +837,14 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 	else:
 		o_w, o_h, w, h = dimensions
 
-	
+
 	if np_img is None:
 		np_img = slide.open_image_np(img_path)
 
 
 	row_tile_size = round(ROW_TILE_SIZE / SCALE_FACTOR)
 	col_tile_size = round(COL_TILE_SIZE / SCALE_FACTOR)
-	
+
 
 	slidePath = util.get_training_slide_path(SRC_TRAIN_DIR, slide_num)
 
@@ -961,7 +961,7 @@ def apply_filters_to_image_range(start_ind, end_ind, save):
 
 
 
-def save_display_tile(tile,imageFile, save=True):
+def save_display_tile(tile,imageFile, save=True, removeBlurry = False):
 	"""
 	Save and/or display a tile image.
 
@@ -972,6 +972,11 @@ def save_display_tile(tile,imageFile, save=True):
 	tile_pil_img = tile_to_pil_tile(tile, imageFile)
 
 	if save:
+		if removeBlurry:
+		    np_tile_for_check = np.array(tile_pil_img)
+		    if util.laplaceVariance(np_tile_for_check): # if its true, its blurry
+		        print("[DEBUG]: tile was blurry")
+		        return
 		img_path = get_tile_image_path(tile)
 		dir = os.path.dirname(img_path)
 		if not os.path.exists(dir):
@@ -1005,24 +1010,24 @@ def tile_to_pil_tile(tile, imageSlide):
 			h = h*8
 		elif RESOLUTION == '2.5x':
 			w = w*16
-			h = h*16				
+			h = h*16
 		else:
 			w = w*2
 			h = h*2
 	elif objective_power ==20:
 		if RESOLUTION == '5x':
 			w = w*4
-			h = h*4		
+			h = h*4
 		elif RESOLUTION == '2.5x':
 			w = w*8
-			h = h*8	
+			h = h*8
 	else:
 		if RESOLUTION == '5x':
 			w = w*2
-			h = h*2		
+			h = h*2
 		elif RESOLUTION == '2.5x':
 			w = w*4
-			h = h*4		
+			h = h*4
 
 	level = 0
 	tile_region = s.read_region((x, y), level, (w, h))
@@ -1031,7 +1036,7 @@ def tile_to_pil_tile(tile, imageSlide):
 	pil_img = tile_region.convert("RGB")
 	return(pil_img)
 
-def summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data):
+def summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data, removeBlurry=False):
 	"""
 	Generate tile summary and top tiles for slide.
 
@@ -1057,7 +1062,8 @@ def summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data):
 
 	if save_top_tiles:
 		for tile in tile_sum.top_tiles():
-			tile.save_tile(imageSlide)
+
+			tile.save_tile(imageSlide, removeBlurry = removeBlurry)
 	return(tile_sum)
 
 
@@ -1120,7 +1126,7 @@ def save_tile_data(tile_summary):
 	# print("%-20s | Time: %-14s  Name: %s" % ("Save Tile Data", str(time.elapsed()), data_path))
 
 
-def image_range_to_tiles(start_ind, end_ind, slides, save_top_tiles, save_data):
+def image_range_to_tiles(start_ind, end_ind, slides, save_top_tiles, save_data, removeBlurry):
 	"""
 	Generate tile summaries and tiles for a range of images.
 
@@ -1142,7 +1148,7 @@ def image_range_to_tiles(start_ind, end_ind, slides, save_top_tiles, save_data):
 		if os.path.exists(os.path.join(TILE_DIR, str(slide_num).zfill(3))):
 			print("does exist")
 			continue
-		tile_summary = summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data)
+		tile_summary = summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data, removeBlurry)
 		print("passedd tile summary")
 		if tile_summary == None:
 			continue
@@ -1268,7 +1274,7 @@ def multiprocess_apply_filters_to_images(save=True, maxProcessors=None):
 
 
 
-def multiprocess_filtered_images_to_tiles(save_top_tiles, save_data, maxProcessors=None):
+def multiprocess_filtered_images_to_tiles(save_top_tiles, save_data, maxProcessors=None, removeBlurry = False):
 	"""
 	Generate tile summaries and tiles for all training images using multiple processes (one process per core).
 
@@ -1305,7 +1311,7 @@ def multiprocess_filtered_images_to_tiles(save_top_tiles, save_data, maxProcesso
 		start_index = int(start_index)
 		end_index = int(end_index)
 		subImages = [slide_labels[x] for x in range(start_index-1,end_index, 1)]
-		tasks.append((start_index, end_index, subImages, save_top_tiles, save_data))
+		tasks.append((start_index, end_index, subImages, save_top_tiles, save_data,removeBlurry))
 	print("tasks")
 	print(tasks)
 	# start tasks
@@ -1460,11 +1466,11 @@ class Tile:
 	def tissue_quantity(self):
 		return(tissue_quantity(self.tissue_percentage))
 
-	def save_tile(self, imageSlide):
-		save_display_tile(self, imageSlide, save=True)
+	def save_tile(self, imageSlide, removeBlurry):
+		save_display_tile(self, imageSlide, save=True, removeBlurry=removeBlurry)
 
 
-def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_data=True, overlap=0):
+def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_data=True, overlap=0, removeBlurry = False):
 	global BASE_DIR, PROJECT, skippedSamps, TRAIN_PREFIX, SRC_TRAIN_DIR, SRC_TRAIN_EXT, DEST_TRAIN_EXT, SCALE_FACTOR, DEST_TRAIN_DIR, TISSUE_HIGH_THRESH, TISSUE_LOW_THRESH, RESOLUTION, \
 			ROW_TILE_SIZE, COL_TILE_SIZE, NUM_TOP_TILES, HSV_PURPLE, HSV_PINK, FILTER_RESULT_TEXT, FILTER_DIR, TOP_TILES_SUFFIX, TOP_TILES_DIR, TILE_DIR, TILE_SUFFIX, TILE_DATA_SUFFIX, \
 			OVERLAP
@@ -1477,8 +1483,9 @@ def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_
 	# PROJECT = "BRCA"
 	TRAIN_PREFIX = PROJECT + "-"
 	SRC_TRAIN_DIR = os.path.join(BASE_DIR, PROJECT + "/")
-	SRC_TRAIN_EXT = "svs"
-	# SRC_TRAIN_EXT = "ndpi"
+# 	SRC_TRAIN_EXT = "svs"
+	SRC_TRAIN_EXT = "ndpi"
+	print(SRC_TRAIN_EXT)
 	#SRC_TRAIN_EXT = "jpg"
 	DEST_TRAIN_EXT = "tiff"
 	SCALE_FACTOR = 32
@@ -1512,7 +1519,7 @@ def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_
 	skippedSamps = open(SKIPPED_SAMPLES, "w")
 	multiprocess_training_slides_to_images(maxProcessors)
 	multiprocess_apply_filters_to_images(save=True, maxProcessors=maxProcessors)
-	multiprocess_filtered_images_to_tiles(save_top_tiles, save_data, maxProcessors=maxProcessors)
+	multiprocess_filtered_images_to_tiles(save_top_tiles, save_data, maxProcessors=maxProcessors, removeBlurry=removeBlurry)
 	skippedSamps.close()
 
 

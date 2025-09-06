@@ -5,11 +5,12 @@ import openslide
 from PIL import Image
 import math
 import re
+import cv2
 
 from openslide import OpenSlideError
 
-#	The associated functions for processing tissue slides have been adapted from an open 
-#	source tutorial on working with pathology slides from IBM: 
+#	The associated functions for processing tissue slides have been adapted from an open
+#	source tutorial on working with pathology slides from IBM:
 #		[1] https://developer.ibm.com/articles/an-automatic-method-to-identify-tissues-from-big-whole-slide-images
 
 
@@ -212,8 +213,15 @@ def tissue_percent(np_img):
 		The percentage of the NumPy array that is tissue.
 	"""
 	return(100 - mask_percent(np_img))
-
-
-
-
-
+import cv2
+from skimage.color import rgb2gray
+def laplaceVariance(img, threshold = 0.02):
+    img = np.array(img)
+  # turn into gray
+    grayscale = rgb2gray(img)
+    laplace_img = cv2.Laplacian(grayscale, cv2.CV_64F, ksize=3)
+    variance = laplace_img.var()
+    # true if blurry
+    if variance <= threshold:
+        return True
+    return False

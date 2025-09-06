@@ -61,6 +61,7 @@ def main ():
 
 	parser.add_argument('--tileOverlap', default=0.0, type=float, help='The proportion of overlap between adjacenet tiles during preprocessing.')
 	parser.add_argument('--stainNorm', action='store_true', help='Normalize the staining colors')
+	parser.add_argument('--removeBlurry', action='store_true', help='removes blurry tiles')
 	parser.add_argument('--batch_size', type=int, default=64, help='How many tiles to include for each mini-batch (default: 64)')
 	parser.add_argument('--workers', default=4, type=int, help='Number of data loading workers (default: 4)')
 	parser.add_argument('--BN_reps', type=int, default=10, help='Number of MonteCarlo iterations to perform for bayesian network estimation (default is 10: sufficient for a dropout<0.2)')
@@ -120,6 +121,7 @@ def main ():
 	save_data=False
 
 	thresholds = {'breast_ffpe': 0.423, 'breast_flash_frozen': 0.433, 'ovarian_flash_frozen': 0.469}
+
 	threshold = thresholds[args.modelType]
 	if args.customThreshold:
 		threshold = args.customThreshold
@@ -128,6 +130,7 @@ def main ():
 		outputPath = os.path.join(args.projectPath, "output")
 	else:
 		outputPath = args.output
+
 	if not os.path.exists(outputPath):
 		os.makedirs(outputPath)
 
@@ -146,7 +149,7 @@ def main ():
 
 		if preprocess:
 			print("\t\tFiltering and tiling image(s)...", end='', flush=True)
-			preproc.preprocess_images(args.project, args.projectPath, args.max_cpu, save_top_tiles, save_data, args.tileOverlap)
+			preproc.preprocess_images(args.project, args.projectPath, args.max_cpu, save_top_tiles, save_data, args.tileOverlap, args.removeBlurry)
 			print("done")
 		if args.stainNorm:
 			print("\t\tNormalizing tissue staining...", end='', flush=True)
@@ -220,7 +223,7 @@ def main ():
 		pool = multiprocessing.Pool(max_seed * max_process_per_gpu)
 		results = []
 		for i in range(max_seed):
-			r = pool.apply_async(utilsModel.runMultiGpuROIs, args=(i, models_parallel[i], args.project, args.projectPath, args.python, outputPath, args.maxROI, args.max_cpu, args.stainNorm, True))
+			r = pool.apply_async(utilsModel.runMultiGpuROIs, args=(i, models_parallel[i], args.project, args.projectPath, args.python, outputPath, args.maxROI, args.max_cpu, args.stainNorm, args.removeBlurry, True))
 		results.append(r)
 		pool.close()
 		pool.join()
