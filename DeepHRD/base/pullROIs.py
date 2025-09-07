@@ -271,8 +271,7 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 			yPos = int(maxTile[1][1:])
 			for i in range(xPos, xPos+length, stepStize):
 				for l in range(yPos, yPos+length, stepStize):
-					img_path = os.path.join(outputPath, sampleIndex, "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"]))
-					currentGrid.append(img_path)
+					img_path = os.path.join(outputPath, sampleIndex, "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"])
 					try:
 						tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
 						tile_region = tile_region.resize((256,256),Image.BILINEAR)
@@ -284,6 +283,8 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 						if stain_norm:
 						    normalizeStaining(img_path, saveFile = img_path[:-4])
 						total_tiles +=1
+
+						currentGrid.append(img_path)
 					except Exception as e:
 						print(f"[ERROR] when saving ROIs: {e}")
 						continue
