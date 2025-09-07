@@ -147,7 +147,6 @@ def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath
                             " --train_lib " + os.path.join(outputPath, "trainData.pt") + " --feature_vectors_train " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_train.tsv") + \
                             " --val_lib " + os.path.join(outputPath, "valData.pt") + " --feature_vectors_val " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv") + \
                             " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu)
-
 		if removeBlurry:
              roiCommand +=" --removeBlurry"
 		if stain_norm:
