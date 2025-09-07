@@ -82,6 +82,7 @@ def main ():
 
 	if not os.path.exists(outputPath):
 		os.makedirs(outputPath)
+		print(f"[DEBUG] MADE ROI DIRECTORY AT {outputPath}")
 
 
 	temp_df = pd.read_csv(args.tileConv, sep="\t", header=None, dtype=str)
@@ -120,7 +121,6 @@ def collectSampleIndex (file):
 
 
 def multiprocess_collectTiles (libraryfile, featureVectorsPath, predictionData, max_cpu, stain_norm, trainData):
-
 	# Read in the feature vectors and the original library file
 	featureVectors = pd.read_csv(featureVectorsPath, sep="\t", header=None, na_filter= False, index_col=[1,0]).fillna(0)
 	lib = torch.load(libraryfile)
@@ -265,6 +265,7 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 
 		# For each selected ROI, resample at 20x magnification. This saves the new tiles into the current outputPath specified above.
 		currentGrid = []
+		total_tiles = 0
 		for maxTile in topTiles:
 			xPos = int(maxTile[0][1:])
 			yPos = int(maxTile[1][1:])
@@ -277,13 +278,16 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 						tile_region = tile_region.resize((256,256),Image.BILINEAR)
 						pil_img = tile_region.convert("RGB")
 						if laplaceVariance(pil_img):
+							print("[DEBUG] IMAGE WAS BLURRY")
                             continue
 						pil_img.save(img_path, "PNG", icc_profile=None)
 						if stain_norm:
 						    normalizeStaining(img_path, saveFile = img_path[:-4])
+						total_tiles +=1
 					except Exception as e:
 						print(f"[ERROR] when saving ROIs: {e}")
 						continue
+		print(f"total tiles for slide: {total_tiles}")
 
 		# Add the resampled tiles to the new data structure for training/validating/testing the second resolution model.
 		currentTrainData20x['slides'].append(x[1])
