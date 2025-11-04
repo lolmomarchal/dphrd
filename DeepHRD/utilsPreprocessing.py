@@ -14,14 +14,19 @@ from openslide import OpenSlideError
 #		[1] https://developer.ibm.com/articles/an-automatic-method-to-identify-tissues-from-big-whole-slide-images
 
 
-def getNumberOfSlides(path, extension):
+def getNumberOfSlides(path, extensions):
 	"""
 	Obtain the total number of WSI training slide images.
 
 	Returns:
 		The total number of WSI training slide images.
 	"""
-	slides = glob.glob1(path, "*." + extension)
+	slides = []
+	for item in extensions:
+		available_slides = glob.glob1(path, "*"+ item)
+		if available_slides:
+				slides.extend(available_slides)
+	print(slides)
 	return (len(slides), slides)
 
 

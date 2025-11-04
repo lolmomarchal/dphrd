@@ -148,7 +148,7 @@ def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath
                             " --val_lib " + os.path.join(outputPath, "valData.pt") + " --feature_vectors_val " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv") + \
                             " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu)
 		if removeBlurry:
-             roiCommand +=" --removeBlurry"
+			 roiCommand +=" --removeBlurry"
 		if stain_norm:
 			 roiCommand +=" --stain_norm"
 			
@@ -370,78 +370,142 @@ def calculateError (pred,real):
 	return (accuracy, fpr, fnr)
 
 
+from collections import defaultdict
+import random
 
-class MILdataset ():
+import torch.utils.data as data
+import torch
+import numpy as np
+import random
+from collections import defaultdict
+from PIL import Image # Make sure PIL is imported
 
+# --- This helper function is needed by __getitem__ ---
+def safe_open(path):
+	"""
+    Tries to open an image path. Returns a blank white image on failure.
+    """
+	try:
+		# Assuming path is a path-like object
+		return Image.open(path)
+	except Exception as e:
+		print(f"Error opening image {path}: {e}")
+		# Return a blank white image on failure
+		return Image.new('RGB', (224, 224), (255, 255, 255))
+
+	# --- REPLACE YOUR ENTIRE MILdataset CLASS WITH THIS ---
+
+class MILdataset(data.Dataset):
 	'''
-	Class edited used from (https://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
-	Instantiates a MIL dataset. 
+    Class edited used from (https://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
+    Instantiates a MIL dataset.
+    '''
 
-	Attributes
-		targets:		[list]	Contains the target value for all tissue slides (i.e. 1 or 0. Alternatively, can be a probability)
-		grid:			[list]	Contains all of the tiles across all tissue slides
-		slideIDX:		[list]	Contains corresponding slide index value for each tile
-		transform:		[Class]	Transform class containing all of the relevant transformations to perform to a given tile
-		mode:			[int]	Specifies whether to generate data in the inference (1) or training (2) mode 
-	'''
-
-	def __init__(self, libraryfile, transform):
+	def __init__(self, libraryfile, transform=None):
 		'''
-		Initializes all class atributes.
-		'''
-		lib = torch.load(libraryfile)
+        Initializes all class atributes.
+        *** This is your original __init__ logic, which is CORRECT for your data. ***
+        '''
+		lib = torch.load(libraryfile, map_location='cpu')
 
 		grid = []
 		slideIDX = []
-		for i,g in enumerate(lib['tiles']):
-			grid.extend(g)
-			slideIDX.extend([i]*len(g))
 
-		self.slidenames = lib['slides']
-		self.targets = lib['targets']
-		self.grid = grid
-		self.slideIDX = slideIDX
+		# This checks if 'tiles' key exists, which is what your .pt file has
+		if 'tiles' not in lib:
+			print(f"[FATAL ERROR in MILdataset] Your .pt file '{libraryfile}' is missing the required 'tiles' key.")
+			self.grid = []
+			self.slideIDX = []
+			self.targets = []
+			self.slidenames = []
+		else:
+			print(f"[INFO MILdataset] Loading tiles from '{libraryfile}'...")
+			# This logic is correct for your 'list of lists' structure
+			for i, g in enumerate(lib['tiles']):
+				grid.extend(g)
+				slideIDX.extend([i] * len(g))
+
+			self.slidenames = lib['slides']
+			self.targets = lib['targets'] # This is your list of torch.Tensors
+			self.grid = grid
+			self.slideIDX = slideIDX
+			print(f"[INFO MILdataset] Loaded {len(self.grid)} total tiles from {len(self.slidenames)} slides.")
+
 		self.transform = transform
-		self.mode = None
+		self.mode = 1  # Default to inference mode
+		self.t_data = [] # Initialize t_data
 
-	def modelState (self,mode):
+	def modelState(self, mode):
 		'''Changes the current mode either to inference or training'''
 		self.mode = mode
 
-	def maketraindata (self, idxs):
-		'''Generates the training dataset using a list of indeces'''
-		self.t_data = [(self.slideIDX[x],self.grid[x],self.targets[self.slideIDX[x]]) for x in idxs]
-		self.t_data = random.sample(self.t_data, len(self.t_data))		
-
-	def __getitem__(self,index):
+	# --- This is the NEW, CORRECT maketraindata function ---
+	def maketraindata(self, idxs):
 		'''
-		Accesses a tile based upon the preset mode (inference or training) and returns the opened tile image and the target tensor
-		'''
+        Generates the training dataset by grouping top-k tiles by slide,
+        shuffling the slides, and then flattening the list.
+        This ensures tiles from one slide are contiguous.
+        '''
 
-		# Inference mode
-		if self.mode == 1:
-			slideIDX = self.slideIDX[index]
-			target = self.targets[slideIDX]
-			tile = self.grid[index]
-			img = safe_open(tile)
+		# 1. Group all top-k tile data by their slideID
+		slide_to_tiles = defaultdict(list)
+		for x in idxs:
+			if x >= len(self.slideIDX):
+				print(f"[WARN] maketraindata: Index {x} out of bounds. Skipping.")
+				continue
 
-			img = self.transform(img)
-			return (img, target)
+			slide_id = self.slideIDX[x]
+			# Use the soft label (self.targets) for training
+			# self.targets[slide_id] will correctly grab the tensor from the list
+			tile_data = (slide_id, self.grid[x], self.targets[slide_id])
+			slide_to_tiles[slide_id].append(tile_data)
 
-		# Training mode
-		elif self.mode == 2:
-			slideIDX, coord, target = self.t_data[index]
-			img = Image.open(coord)
-			img = self.transform(img)
-			return (img, target)
+		# 2. Get a list of all unique slide IDs that have tiles
+		unique_slide_ids = list(slide_to_tiles.keys())
 
+		# 3. Shuffle the *list of slide IDs*, not the tiles
+		random.shuffle(unique_slide_ids)
+
+		# 4. Build the new t_data by iterating through the shuffled slides
+		self.t_data = []
+		for slide_id in unique_slide_ids:
+			# Extend the list with all tiles from this slide
+			self.t_data.extend(slide_to_tiles[slide_id])
+
+		print(f"[INFO] maketraindata: Created new training set with {len(self.t_data)} tiles from {len(unique_slide_ids)} slides.")
+
+	def __getitem__(self, index):
+			'''
+			Accesses a tile based upon the preset mode (inference or training)
+			'''
+			if self.mode == 1:
+				slideIDX = self.slideIDX[index]
+				target = self.targets[slideIDX] # Gets the tensor for this slide
+				tile_path = self.grid[index]
+				img = safe_open(tile_path) # Use the safe_open function
+
+			# Mode 2: Training - use the subset t_data
+			elif self.mode == 2:
+				slideIDX, tile_path, target = self.t_data[index] # target is already the tensor
+				img = safe_open(tile_path) # Use the safe_open function
+
+			else:
+				# Handle case where mode is not set
+				raise IndexError(f"Dataset mode not set to 1 or 2. Current mode: {self.mode}")
+
+			# Apply transformations
+			if self.transform is not None:
+				img = self.transform(img)
+
+			# target is already a tensor, so it's ready for the model
+			return (img, target, slideIDX)
 	def __len__(self):
 		'''
-		Returns the length of the given dataset, whether it's the training or inference sets
-		'''
+        Returns the length of the given dataset, whether it's the training or inference sets
+        '''
 		if self.mode == 1:
-			return (len(self.grid))
+			return len(self.grid)
 		elif self.mode == 2:
-			return (len(self.t_data))
-
-
+			return len(self.t_data)
+		else:
+			return 0 # Return 0 if mode is not set

@@ -17,12 +17,8 @@ Image.MAX_IMAGE_PIXELS = None
 
 def collectSampleIndex (file):
 	sample = file.split("/")[-1].split(".")[0]
-	print(f"sample collect: {sample}")
-	print(f"tileConversionMatrix: ")
-	print(tileConversionMatrix)
 
 	sampleIndex = int(tileConversionMatrix.loc[sample].iloc[0])
-	print("sample index: {sampleIndex}")
 	if sampleIndex < 10:
 		sampleIndex = "00" + str(sampleIndex)
 	elif 100 > sampleIndex > 10:
@@ -289,9 +285,9 @@ def gatherData (files, svsPath, tilesPath):
 	countsAmbig = 0
 	samplesDone = []
 
-	for file in files.slide:
-		print("file:")
-		print(file)
+	for file in files.index:
+# 		print("file:")
+# 		print(file)
 		try:
 			sampleIndex = collectSampleIndex(file)
 			print(f"Sample index {sampleIndex}")
@@ -300,8 +296,8 @@ def gatherData (files, svsPath, tilesPath):
 			continue
 
 		currentTilePath = os.path.join(tilesPath, sampleIndex)
-		print("current tile path")
-		print(currentTilePath)
+# 		print("current tile path")
+# 		print(currentTilePath)
 		if os.path.exists(currentTilePath) and len(os.listdir(currentTilePath)) > 0:
 			newTiles = []
 			for tileFile in [x for x in os.listdir(currentTilePath) if ".png" in x]:
@@ -313,10 +309,10 @@ def gatherData (files, svsPath, tilesPath):
 
 		#try:
 		if 'sigMatrix' in globals():
-			print(f"sigmatrix index: {sigMatrix.index}")
-			print(f"sigmatrix columns: {sigMatrix.columns}")
-			print(f"file {file}")
-			print(f"sampleIndex {sampleIndex}")
+# 			print(f"sigmatrix index: {sigMatrix.index}")
+# 			print(f"sigmatrix columns: {sigMatrix.columns}")
+# 			print(f"file {file}")
+# 			print(f"sampleIndex {sampleIndex}")
 # 			sample =int(float(sampleIndex))
 			sigExposure =  sigMatrix.loc[file, "label"]
 			sigExposureSoft = sigMatrix.loc[file, "softLabel"]
@@ -376,10 +372,11 @@ def generateDataStructures (project, projectPath, metaDataFile, tilesPath, outpu
 
 	SIG_CUTOFF = 29
 	SIG_CUTOFF_LOWER = 29
-
-	# 	tileConversionMatrix = pd.read_csv(tileConversionFile, sep="\t", header=None, index_col=1, dtype=str)
-	# 	tileConversionMatrix = tileConversionMatrix[~tileConversionMatrix.index.duplicated(keep='first')]]
-	sigMatrix = pd.read_csv(metaDataFile, sep="\t", header=0, index_col='patient_files')
+#
+# 	# 	tileConversionMatrix = pd.read_csv(tileConversionFile, sep="\t", header=None, index_col=1, dtype=str)
+# 	# 	tileConversionMatrix = tileConversionMatrix[~tileConversionMatrix.index.duplicated(keep='first')]]
+# 	print(metaDataFile)
+	sigMatrix = pd.read_csv(metaDataFile, sep="\t", header=0, index_col='slide')
 
 	temp_df = pd.read_csv(tileConversionFile, sep="\t", header=None, dtype=str)
 	temp_df.columns = ['slide_number', 'slide_name']
@@ -387,12 +384,12 @@ def generateDataStructures (project, projectPath, metaDataFile, tilesPath, outpu
 
 	if prediction:
 		testFiles = collectFiles(prediction)
-		print("test files:")
-		print(testFiles)
-		print(sigMatrix)
-		print("gathered test data")
+# 		print("test files:")
+# 		print(testFiles)
+# 		print(sigMatrix)
+# 		print("gathered test data")
 		testData = gatherData(sigMatrix.loc[testFiles], svsPath, tilesPath)
-		print(testData)
+# 		print(testData)
 		torch.save(testData, os.path.join(outputPath,"testData.pt"))
 	else:
 		trainFiles, valFiles, testFiles = collectFiles (prediction)

@@ -72,9 +72,12 @@ def main ():
 	parser.add_argument('--train5x', action='store_true', help='Train a 5x ensemble model.')
 	parser.add_argument('--train20x', action='store_true', help='Train a 20x ensemble model.')
 	parser.add_argument('--calcFeatures', action='store_true', help='Generate tile feature vectors for each 5x model.')
-	parser.add_argument('--pullROIs', action='store_true', help='Pull regions of interest using each 5x model.')
+	parser.add_argument('--pullROIs', action='store_true', help='Pull regions of interest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    using each 5x model.')
 	parser.add_argument('--best5xModels', nargs='+', type=int, default=None, help='Provide a list of best models to use for the 5x training (Use the epoch number; i.e. checkpoint_best_5x_150.pth would be model 150). You should provide 1 value per ensemble model (i.e. ensemble of 5 models should have 5 model numbers. Default will use the final saved checkpoints after training the 5x model.')
 	parser.add_argument('--epochs', type=int, default=200, help='Number of training epochs.')
+
+    # extra args
+	parser.add_argument('--removeBlurry', action='store_true', help='Removes blurry tiles')
 
 
 	args = parser.parse_args()

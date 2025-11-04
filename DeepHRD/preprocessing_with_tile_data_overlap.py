@@ -21,30 +21,8 @@ Image.MAX_IMAGE_PIXELS = None
 # # BASE_DIR = "/Users/ebergstr/Desktop/lab/thesis/Aim3/histology/BRCA/debug/"
 # # SKIPPED_SAMPLES = os.path.join(BASE_DIR, "skipped_samples.txt")
 
-# # PROJECT = "BRCA"
-# TRAIN_PREFIX = PROJECT + "-"
-# SRC_TRAIN_DIR = os.path.join(BASE_DIR, PROJECT + "/")
-# SRC_TRAIN_EXT = "svs"
-# DEST_TRAIN_EXT = "png"
+
 SCALE_FACTOR = 32
-# DEST_TRAIN_DIR = os.path.join(BASE_DIR, PROJECT + "_" + DEST_TRAIN_EXT)
-# TISSUE_HIGH_THRESH = 80
-# TISSUE_LOW_THRESH = 10
-# RESOLUTION = '5x'
-# ROW_TILE_SIZE = 256
-# COL_TILE_SIZE = 256
-# NUM_TOP_TILES = 100000
-
-# HSV_PURPLE = 270
-# HSV_PINK = 330
-
-# FILTER_RESULT_TEXT = "filtered"
-# FILTER_DIR = os.path.join(BASE_DIR, "filter_" + DEST_TRAIN_EXT)
-
-# TOP_TILES_SUFFIX = "top_tile_summary"
-# TOP_TILES_DIR = os.path.join(BASE_DIR, TOP_TILES_SUFFIX + "_" + DEST_TRAIN_EXT)
-# TILE_DIR = os.path.join(BASE_DIR, "tiles_" + DEST_TRAIN_EXT)
-# TILE_SUFFIX = "tile"
 
 
 print("\n\n--- CONFIRMED: RUNNING THE LATEST SCRIPT VERSION ---\n\n") # <<< ADD THIS LINE
@@ -1175,7 +1153,7 @@ def multiprocess_training_slides_to_images(numProcessors=None):
 		num_processes = multiprocessing.cpu_count()
 	pool = multiprocessing.Pool(num_processes)
 
-	num_train_images, train_images = util.getNumberOfSlides(SRC_TRAIN_DIR, SRC_TRAIN_EXT)
+	num_train_images, train_images = util.getNumberOfSlides(SRC_TRAIN_DIR, VALID_EXT)
 
 
 	if num_processes > num_train_images:
@@ -1245,7 +1223,7 @@ def multiprocess_apply_filters_to_images(save=True, maxProcessors=None):
 	pool = multiprocessing.Pool(num_processes)
 
 
-	num_train_images, slide_labels = util.getNumberOfSlides(SRC_TRAIN_DIR, SRC_TRAIN_EXT)
+	num_train_images, slide_labels = util.getNumberOfSlides(SRC_TRAIN_DIR, VALID_EXT)
 
 	if num_processes > num_train_images:
 		num_processes = num_train_images
@@ -1290,7 +1268,7 @@ def multiprocess_filtered_images_to_tiles(save_top_tiles, save_data, maxProcesso
 	pool = multiprocessing.Pool(num_processes)
 
 
-	num_train_images, slide_labels = util.getNumberOfSlides(SRC_TRAIN_DIR, SRC_TRAIN_EXT)
+	num_train_images, slide_labels = util.getNumberOfSlides(SRC_TRAIN_DIR, VALID_EXT)
 
 	if num_processes > num_train_images:
 		num_processes = num_train_images
@@ -1473,20 +1451,17 @@ class Tile:
 def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_data=True, overlap=0, removeBlurry = False):
 	global BASE_DIR, PROJECT, skippedSamps, TRAIN_PREFIX, SRC_TRAIN_DIR, SRC_TRAIN_EXT, DEST_TRAIN_EXT, SCALE_FACTOR, DEST_TRAIN_DIR, TISSUE_HIGH_THRESH, TISSUE_LOW_THRESH, RESOLUTION, \
 			ROW_TILE_SIZE, COL_TILE_SIZE, NUM_TOP_TILES, HSV_PURPLE, HSV_PINK, FILTER_RESULT_TEXT, FILTER_DIR, TOP_TILES_SUFFIX, TOP_TILES_DIR, TILE_DIR, TILE_SUFFIX, TILE_DATA_SUFFIX, \
-			OVERLAP
+			OVERLAP, VALID_EXT
+
+
+	# ==================================== CONSTANTS ================================================================
 
 	BASE_DIR = projectPath
 	PROJECT = project
 	SKIPPED_SAMPLES = os.path.join(BASE_DIR, "skipped_samples.txt")
 	OVERLAP = overlap
-
-	# PROJECT = "BRCA"
 	TRAIN_PREFIX = PROJECT + "-"
 	SRC_TRAIN_DIR = os.path.join(BASE_DIR, PROJECT + "/")
-# 	SRC_TRAIN_EXT = "svs"
-	SRC_TRAIN_EXT = "ndpi"
-	print(SRC_TRAIN_EXT)
-	#SRC_TRAIN_EXT = "jpg"
 	DEST_TRAIN_EXT = "tiff"
 	SCALE_FACTOR = 32
 	DEST_TRAIN_DIR = os.path.join(BASE_DIR, PROJECT + "_" + DEST_TRAIN_EXT)
@@ -1495,13 +1470,9 @@ def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_
 	RESOLUTION = '5x'
 	ROW_TILE_SIZE = 256
 	COL_TILE_SIZE = 256
-	#ROW_TILE_SIZE = 224
-	#COL_TILE_SIZE = 224
 	NUM_TOP_TILES = 100000
-
 	HSV_PURPLE = 270
 	HSV_PINK = 330
-
 	FILTER_RESULT_TEXT = "filtered"
 	FILTER_DIR = os.path.join(BASE_DIR, "filter_" + DEST_TRAIN_EXT)
 
@@ -1511,6 +1482,15 @@ def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_
 	TILE_SUFFIX = "tile"
 	TILE_DATA_SUFFIX = "tile_data_" + RESOLUTION + "_overlap" + str(OVERLAP).replace(".", "")
 
+    # current valid extensions for openslide
+	VALID_EXT = (".svs", ".tif", ".tiff", ".dcm",
+                            ".ndpi", ".vms", ".vmu", ".scn",
+                            ".mrxs", ".svslide", ".bif")
+
+#
+# # 	SRC_TRAIN_EXT = "svs"
+# 	SRC_TRAIN_EXT = "ndpi"
+# 	#SRC_TRAIN_EXT = "jpg"
 
 	if max_cpu:
 		maxProcessors = max_cpu
