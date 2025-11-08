@@ -510,6 +510,9 @@ class MILdataset(data.Dataset):
 				self.t_data.extend(slide_to_tiles[slide_id])
 
 		print(f"[INFO] maketraindata: Created new weighted training set with {len(self.t_data)} tiles from {len(unique_slide_ids)} unique slides.")
+		sampled_subtypes = [self.subtype[sid] for sid in shuffled_slide_ids]
+		from collections import Counter
+		print(f"[DEBUG] Sampled subtype distribution this epoch: {Counter(sampled_subtypes)}")
 	def __getitem__(self, index):
 			'''
 			Accesses a tile based upon the preset mode (inference or training)
