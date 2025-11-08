@@ -417,6 +417,7 @@ class MILdataset(data.Dataset):
 			self.grid = []
 			self.slideIDX = []
 			self.targets = []
+			self.subtype = []
 			self.slidenames = []
 		else:
 			print(f"[INFO MILdataset] Loading tiles from '{libraryfile}'...")
@@ -426,7 +427,8 @@ class MILdataset(data.Dataset):
 				slideIDX.extend([i] * len(g))
 
 			self.slidenames = lib['slides']
-			self.targets = lib['targets'] # This is your list of torch.Tensors
+			self.targets = lib['targets']
+			self.subtype = lib ["subtype"]# This is your list of torch.Tensors
 			self.grid = grid
 			self.slideIDX = slideIDX
 			print(f"[INFO MILdataset] Loaded {len(self.grid)} total tiles from {len(self.slidenames)} slides.")
@@ -442,9 +444,9 @@ class MILdataset(data.Dataset):
 	# --- This is the NEW, CORRECT maketraindata function ---
 	def maketraindata(self, idxs):
 		'''
-        Generates the training dataset by grouping top-k tiles by slide,
-        shuffling the slides, and then flattening the list.
-        This ensures tiles from one slide are contiguous.
+        Generates the training dataset by performing WEIGHTED SAMPLING of slides
+        (based on subtype) and then flattening the tile list.
+        'idxs' are the Top-K tile indices *for this epoch*.
         '''
 
 		# 1. Group all top-k tile data by their slideID
@@ -455,25 +457,59 @@ class MILdataset(data.Dataset):
 				continue
 
 			slide_id = self.slideIDX[x]
-			# Use the soft label (self.targets) for training
-			# self.targets[slide_id] will correctly grab the tensor from the list
+
+			# --- [THIS IS THE MISSING LINE] ---
+			# This line defines the 'tile_data' variable before it's used.
 			tile_data = (slide_id, self.grid[x], self.targets[slide_id])
+			slide_id = self.slideIDX[x]
 			slide_to_tiles[slide_id].append(tile_data)
 
-		# 2. Get a list of all unique slide IDs that have tiles
+		# 2. Get a list of all unique slide IDs that have tiles *in this epoch*
+		#    This is the "available samples" list you're talking about.
 		unique_slide_ids = list(slide_to_tiles.keys())
 
-		# 3. Shuffle the *list of slide IDs*, not the tiles
-		random.shuffle(unique_slide_ids)
+		if not unique_slide_ids:
+			print("[ERROR] maketraindata: No slide IDs found. t_data will be empty.")
+			self.t_data = []
+			return
 
-		# 4. Build the new t_data by iterating through the shuffled slides
+		# --- [THIS IS THE DYNAMIC WEIGHTING LOGIC] ---
+		try:
+				# 3. Get the subtype for *only these available slides*
+				slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
+
+				# 4. Calculate weights based *only* on the counts from this epoch
+				from collections import Counter
+				subtype_counts = Counter(slide_subtypes)
+
+				subtype_weights = {
+					subtype: 1.0 / count
+					for subtype, count in subtype_counts.items()
+				}
+
+				# 5. Create a list of weights *in the same order* as unique_slide_ids
+				slide_weights = [subtype_weights[subtype] for subtype in slide_subtypes]
+
+				# 6. Perform a weighted shuffle
+				shuffled_slide_ids = random.choices(
+					population=unique_slide_ids,
+					weights=slide_weights,
+					k=len(unique_slide_ids)
+				)
+				# This print statement will prove it's working (e.g., counts will change each epoch)
+				print(f"[INFO] maketraindata: Calculated epoch-specific subtype counts: {subtype_counts}")
+
+		except Exception as e:
+				print(f"[ERROR] maketraindata: Error during weighting: {e}. Falling back to random.shuffle.")
+				shuffled_slide_ids = unique_slide_ids
+				random.shuffle(shuffled_slide_ids)
+
+			# 7. Build the new t_data (still bag-contiguous)
 		self.t_data = []
-		for slide_id in unique_slide_ids:
-			# Extend the list with all tiles from this slide
-			self.t_data.extend(slide_to_tiles[slide_id])
+		for slide_id in shuffled_slide_ids:
+				self.t_data.extend(slide_to_tiles[slide_id])
 
-		print(f"[INFO] maketraindata: Created new training set with {len(self.t_data)} tiles from {len(unique_slide_ids)} slides.")
-
+		print(f"[INFO] maketraindata: Created new weighted training set with {len(self.t_data)} tiles from {len(unique_slide_ids)} unique slides.")
 	def __getitem__(self, index):
 			'''
 			Accesses a tile based upon the preset mode (inference or training)

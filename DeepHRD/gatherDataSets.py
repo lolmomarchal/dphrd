@@ -278,6 +278,7 @@ def gatherData (files, svsPath, tilesPath):
 	data['slides'] = []
 	data['tiles'] = []
 	data['targets'] = []
+	data["subtype"] = []
 
 	saveSamp = True
 	countsPos = 0
@@ -304,6 +305,15 @@ def gatherData (files, svsPath, tilesPath):
 				newTiles.append(os.path.join(currentTilePath, tileFile))
 		else:
 			continue
+		try:
+			# !!! IMPORTANT: Change 'subtype' to your actual metadata column name (e.g., 'PAM50') !!!
+			subtype = sigMatrix.loc[file, "subtype"]
+		except KeyError:
+			print(f"[Warning] 'subtype' column not found in metadata for {file}. Using 'missing'.")
+			subtype = "missing"
+		except Exception as e:
+			print(f"[Warning] Error reading subtype for {file}: {e}. Using 'missing'.")
+			subtype = "missing"
 
 		# if True:
 
@@ -331,6 +341,7 @@ def gatherData (files, svsPath, tilesPath):
 		if saveSamp:
 			data['slides'].append(os.path.join(svsPath, file))
 			data['tiles'].append(newTiles)
+			data["subtype"].append(subtype)
 
 		saveSamp = True
 

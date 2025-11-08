@@ -1026,14 +1026,16 @@ def summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data, removeBl
 	try:
 		print("ok")
 		img_path = get_filter_image_result(slide_num)
-	except:
-		print("ough")
+	except Exception as e:
+		print(e)
 
 		return(None)
 	print("?")
 	np_img = util.open_image_np(img_path)
-
-	tile_sum = score_tiles(slide_num, np_img)
+	try:
+		tile_sum = score_tiles(slide_num, np_img)
+	except Exception:
+		print(e)
 
 	if save_data:
 		save_tile_data(tile_sum)

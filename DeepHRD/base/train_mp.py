@@ -19,7 +19,7 @@ import warnings
 import csv
 import pandas as pd
 from sklearn.metrics import roc_auc_score
-
+from pytorch_metric_learning import losses # <-- ADD THIS LINE
 # To ignore all warnings:
 warnings.filterwarnings("ignore")
 
@@ -192,40 +192,58 @@ def inference(loader, model, criterion):
     return all_probs, mean_loss
 
 
-def train(run, loader, model, criterion, optimizer, k=10, lambda_reg=0.2, device="cpu", instance_weight=0.2):
+def train(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg=0.2, device="cpu"):
+    """
+    Updated train function with Supervised Contrastive Loss (SupCon)
+    that only runs on tiles with "definitive" hard labels (e.g., [0, 1] or [1, 0]).
+    """
     model.train()
     running_loss = 0.0
-    running_inst_loss = 0.0  # **<-- NEW: Accumulator for instance loss**
+    running_inst_loss = 0.0
     total_samples = 0
     if len(loader.dataset) == 0:
         print(f"[EPOCH {run}] Warning: Training dataset is empty. Skipping train step.")
-        return 0.0, 0.0 # Adjusted return for two values
+        return 0.0, 0.0
 
     slide_outputs = {}
 
     for i, (input, target, slide_ids) in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[TRAINING]"):
-        input = input.to(device)
-        target = target.to(device)
-        slide_ids = slide_ids.to(device)
+        input = input.to(device, non_blocking= True )
+        target = target.to(device, non_blocking= True )  # Target shape is (B, 2), e.g., [[0.0, 1.0], [0.3, 0.7]]
+        slide_ids = slide_ids.to(device, non_blocking= True )
         batch_size = input.size(0)
         total_samples += batch_size
 
         # 1. Forward Pass
+        # projected_features shape is (B, 128)
         logits, _, projected_features = model(input)
-        probs = F.softmax(logits, dim=1)[:, 1]
 
-        # 2. Main Classification Loss
+        # 2. Main Classification Loss (runs on ALL tiles)
+        # This loss handles soft labels (e.g., [0.3, 0.7]) correctly.
         loss_cls = criterion(logits, target)
 
-        # 3. Instance Regularization Loss
-        inst_loss = compute_inst_regulation(
-            instance_probs=probs,
-            instance_features=projected_features,
-            slide_labels=target,
-            slide_ids=slide_ids,
-            k=k,
-            device=device
-        )
+        # 3. Supervised Contrastive Loss (runs ONLY on "definitive" tiles)
+
+        # --- NEW LOGIC TO FILTER FOR DEFINITIVE LABELS ---
+        # A "definitive" label is [0, 1] or [1, 0].
+        # We can find this by checking if the value for class 0 is exactly 0.0 or 1.0.
+        # This creates a boolean mask of shape (B,).
+        definitive_mask = (target[:, 0] == 0.0) | (target[:, 0] == 1.0)
+
+        # Get the hard labels (0 or 1) for all tiles in the batch
+        # Shape: (B,)
+        hard_labels = torch.argmax(target, dim=1)
+
+        # Filter: select only the features and labels that correspond
+        # to our "definitive" tiles.
+        features_for_supcon = projected_features[definitive_mask]
+        labels_for_supcon = hard_labels[definitive_mask]
+
+        inst_loss = torch.tensor(0.0, device=device)
+        # SupCon loss requires at least 2 samples to compare.
+        if labels_for_supcon.shape[0] > 1:
+            inst_loss = criterion_supcon(features_for_supcon, labels_for_supcon)
+        # --- END OF NEW LOGIC ---
 
         # 4. Total Loss Calculation
         loss = (1 - lambda_reg) * loss_cls + lambda_reg * inst_loss
@@ -237,9 +255,13 @@ def train(run, loader, model, criterion, optimizer, k=10, lambda_reg=0.2, device
 
         # 6. Aggregation (for epoch-end reporting)
         running_loss += loss.item() * batch_size
-        running_inst_loss += inst_loss.item() * batch_size # **<-- NEW: Accumulate instance loss**
+        running_inst_loss += inst_loss.item() * batch_size # Accumulate the (potentially 0) inst_loss
 
         # 7. Slide Output Tracking
+        # We need to calculate probs for logging, but not for the loss
+        with torch.no_grad():
+            probs = F.softmax(logits, dim=1)[:, 1]
+
         for sid, t, p in zip(slide_ids.cpu().numpy(), target.cpu(), probs.cpu()):
             sid_key = int(sid)
             if sid_key not in slide_outputs:
@@ -249,21 +271,23 @@ def train(run, loader, model, criterion, optimizer, k=10, lambda_reg=0.2, device
     # --- Code that runs ONCE after the batch loop completes ---
     if total_samples == 0:
         epoch_loss = 0.0
-        epoch_inst_loss = 0.0 # **<-- NEW**
+        epoch_inst_loss = 0.0
     else:
         epoch_loss = running_loss / total_samples
-        epoch_inst_loss = running_inst_loss / total_samples # **<-- NEW: Calculate mean instance loss**
+        epoch_inst_loss = running_inst_loss / total_samples
 
     # Corrected DEBUG SECTION (Now outside the loop and writing correctly)
     train_slide_path = os.path.join(args.output, f"train_slide_debug_epoch{run}.tsv")
-    with open(train_slide_path, "w") as f:
-        print("slide_id\tn_tiles\tmean_prob\ttarget_label", file=f)
+    with open(train_slide_path, "w", newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["slide_id", "n_tiles", "mean_prob", "target_label"])
         for sid, info in slide_outputs.items():
             probs_arr = np.array(info["probs"])
             mean_prob = np.mean(probs_arr)
+            # .tolist() is safer for CSV writing
             target_label = info["target"].cpu().numpy().tolist()
             n_tiles = len(probs_arr)
-            print(f"{sid}\t{n_tiles}\t{mean_prob:.4f}\t{target_label}", file=f)
+            writer.writerow([sid, n_tiles, f"{mean_prob:.4f}", target_label])
 
     # --- MODIFIED FINAL PRINT STATEMENT ---
     print(
@@ -369,7 +393,7 @@ def main():
             num_classes = len(classes)
             sorted_counts = class_counts[np.argsort(classes)]
             weights = total_samples / (num_classes * sorted_counts)
-            class_weights = torch.FloatTensor(weights).to(device)
+            class_weights = torch.FloatTensor(weights).to(device, non_blocking= True )
             print(f"Auto-calculated weights from argmax of 'targets' key: {class_weights.cpu().tolist()}")
     # 3. Initiate model
     model = RNN(args.dropoutRate)
@@ -380,30 +404,31 @@ def main():
     if args.loss_fn == "ce":
         w = class_weights
         if w is None and args.weights != 0.5:
-            w = torch.Tensor([1 - args.weights, args.weights]).to(device)
+            w = torch.Tensor([1 - args.weights, args.weights]).to(device,non_blocking= True )
             print(f"[INFO] Using Weighted Soft Cross-Entropy Loss (from --weights: {w.cpu().tolist()})")
         elif w is not None:
             print(f"[INFO] Using Weighted Soft Cross-Entropy Loss (from metadata: {w.cpu().tolist()})")
         else:
             print("Using Soft Cross-Entropy Loss (unweighted)")
-        criterion = SoftCrossEntropyLoss(weight=w).to(device)
+        criterion = SoftCrossEntropyLoss(weight=w).to(device, non_blocking= True )
     elif args.loss_fn == 'focal':
         alpha_w = class_weights
         if alpha_w is None:
             if args.focal_alpha is not None:
-                alpha_w = torch.Tensor([1 - args.focal_alpha, args.focal_alpha]).to(device)
+                alpha_w = torch.Tensor([1 - args.focal_alpha, args.focal_alpha]).to(device, non_blocking= True )
                 print(
                     f"Using Focal Loss (Gamma={args.focal_gamma}, Alpha from --focal_alpha: {alpha_w.cpu().tolist()})")
             elif args.weights != 0.5:
-                alpha_w = torch.Tensor([1 - args.weights, args.weights]).to(device)
+                alpha_w = torch.Tensor([1 - args.weights, args.weights]).to(device, non_blocking= True )
                 print(f"Using Focal Loss (Gamma={args.focal_gamma}, Alpha from --weights: {alpha_w.cpu().tolist()})")
             else:
                 print(f"Using Focal Loss (Gamma={args.focal_gamma}, No Alpha)")
         else:
             print(f"Using Focal Loss (Gamma={args.focal_gamma}, Alpha from metadata: {alpha_w.cpu().tolist()})")
 
-        criterion = FocalLossWithProbs(alpha=alpha_w, gamma=args.focal_gamma).to(device)
+        criterion = FocalLossWithProbs(alpha=alpha_w, gamma=args.focal_gamma).to(device, non_blocking= True )
 
+    criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
     cudnn.benchmark = False
 
@@ -416,13 +441,17 @@ def main():
                                 transforms.ToTensor(), normalize])
     # 6. Dataset start
     train_dset = ut.MILdataset(args.train_lib, trans)
+    if device == "cpu":
+        pin_memory = False
+    else:
+        pin_memory = True
 
     if args.val_lib:
         val_dset = ut.MILdataset(args.val_lib, trans)
         val_loader = torch.utils.data.DataLoader(
             val_dset,
             batch_size=args.batch_size, shuffle=False,
-            num_workers=args.workers, pin_memory=False)
+            num_workers=args.workers, pin_memory=pin_memory)
     # 7. Logging
     log_path = os.path.join(args.output, f'training_log_{resolution}.csv')
     with open(log_path, 'w', newline='') as f:
@@ -442,7 +471,7 @@ def main():
         infer_loader = torch.utils.data.DataLoader(
             train_dset,
             batch_size=args.batch_size, shuffle=False,
-            num_workers=args.workers, pin_memory=False)
+            num_workers=args.workers, pin_memory=pin_memory)
         probs, loss = inference(infer_loader, model, criterion)
         if probs.size == 0:
             print("\n[FATAL ERROR] Inference returned an empty probability array. Cannot group tiles.")
@@ -460,13 +489,12 @@ def main():
             batch_size=args.batch_size,
             shuffle=False,
             num_workers=args.workers,
-            pin_memory=False)
+            pin_memory=pin_memory)
         train_dset.modelState(2)
-        train_loss, train_inst_loss= train(epoch + 1, train_loader_new, model, criterion, optimizer,
-                           k=args.k,
-                           lambda_reg=0.2,
-                           device=device,
-                           instance_weight=0.2)
+        train_loss, train_inst_loss = train(epoch + 1, train_loader_new, model,
+                                            criterion, criterion_supcon, optimizer, # <-- Pass new criterion
+                                            lambda_reg=0.2,
+                                            device=device)
         log_data = {
             'epoch': epoch + 1,
             'train_loss': train_loss,
