@@ -868,7 +868,8 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 
 		o_c_s, o_r_s = small_to_large_mapping((c_s, r_s), (o_w, o_h))
 		o_c_e_grid, o_r_e_grid = small_to_large_mapping((c_e_grid, r_e_grid), (o_w, o_h)) # <-- Note: I see a typo here in your original file, should be o_h, not o_H. I'll assume it's o_h.
-
+		o_c_e_grid = min(o_c_e_grid, o_w)
+		o_r_e_grid = min(o_r_e_grid, o_h)
 		# +++ START FIX +++
 		# pixel adjustment in case tile dimension too large (e.g., 2049 vs 2048)
 
