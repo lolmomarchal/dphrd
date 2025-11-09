@@ -18,8 +18,8 @@ import tqdm
 import warnings
 import csv
 import pandas as pd
-from sklearn.metrics import roc_auc_score
-from pytorch_metric_learning import losses # <-- ADD THIS LINE
+from sklearn.metrics from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, confusion_matrix
+from pytorch_metric_learning import losses
 # To ignore all warnings:
 warnings.filterwarnings("ignore")
 
@@ -41,7 +41,7 @@ parser.add_argument('--batch_size', type=int, default=64, help='Mini-batch size.
 parser.add_argument('--epochs', type=int, default=200, help='Number of training epochs.')
 parser.add_argument('--validation_interval', default=1, type=int,
                     help='How often to run inference on the validation set.')
-parser.add_argument('--k', default=20, type=int,
+parser.add_argument('--k', default=40, type=int,
                     help='The top k tiles based on predicted model probabilities used as representative features of the training classes for each slide.')
 parser.add_argument('--checkpoint', default=None, type=str,
                     help='Checkpoint model to restart a given training session or for transfer learning.')
@@ -224,10 +224,6 @@ def train(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg
 
         # 3. Supervised Contrastive Loss (runs ONLY on "definitive" tiles)
 
-        # --- NEW LOGIC TO FILTER FOR DEFINITIVE LABELS ---
-        # A "definitive" label is [0, 1] or [1, 0].
-        # We can find this by checking if the value for class 0 is exactly 0.0 or 1.0.
-        # This creates a boolean mask of shape (B,).
         definitive_mask = (target[:, 0] == 0.0) | (target[:, 0] == 1.0)
 
         # Get the hard labels (0 or 1) for all tiles in the batch
@@ -457,8 +453,8 @@ def main():
     with open(log_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow([
-            'epoch', 'train_loss', 'val_loss', 'val_acc',
-            'val_auc', 'val_err', 'val_fpr', 'val_fnr'
+            'epoch', 'train_loss', 'train_inst_loss', 'val_loss', 'val_acc',
+            'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr'
         ])
     # 8. training loop
     early_stop = 0
@@ -487,7 +483,7 @@ def main():
         train_loader_new = torch.utils.data.DataLoader(
             train_dset,
             batch_size=args.batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=args.workers,
             pin_memory=pin_memory)
         train_dset.modelState(2)
@@ -498,10 +494,11 @@ def main():
         log_data = {
             'epoch': epoch + 1,
             'train_loss': train_loss,
-            'train_inst_loss':train_inst_loss,
+            'train_inst_loss': train_inst_loss,
             'val_loss': np.nan,
             'val_acc': np.nan,
             'val_auc': np.nan,
+            'val_f1': np.nan,
             'val_err': np.nan,
             'val_fpr': np.nan,
             'val_fnr': np.nan
@@ -510,20 +507,37 @@ def main():
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss = inference(val_loader, model, criterion)
+
+
             maxs = ut.groupTopKtilesProbabilities(np.array(val_dset.slideIDX), probs, len(val_dset.targets))
-            pred = [1 if x >= 0.5 else 0 for x in maxs]
+
             true_labels_tensors = val_dset.targets
             true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])
-            accuracy, fpr, fnr = ut.calculateError(maxs, val_dset.targets)  # <-- USE THE 1D LABELS
-            err = (fpr + fnr) / 2.
+
+            pred_binary = np.array([1 if x >= 0.5 else 0 for x in maxs])
+            auc = roc_auc_score(true_labels_1d, maxs)
+            accuracy = accuracy_score(true_labels_1d, pred_binary)
+            f1 = f1_score(true_labels_1d, pred_binary)
+
             try:
-                auc = roc_auc_score(true_labels_1d, maxs)
-            except ValueError as e:
-                print(f"[ERROR] Could not calculate AUC (epoch {epoch + 1}): {e}. Setting AUC to 0.0")
-                auc = 0.0
+                tn, fp, fn, tp = confusion_matrix(true_labels_1d, pred_binary).ravel()
+
+                fpr = fp / (fp + tn) if (fp + tn) > 0 else 0.0
+
+                fnr = fn / (fn + tp) if (fn + tp) > 0 else 0.0
+
+            except ValueError:
+                # This can happen if true_labels_1d contains only one class (e.g., all 0s or all 1s)
+                print(f"Warning: Could not calculate confusion matrix at epoch {epoch + 1}. True labels might contain only one class.")
+                fpr = np.nan
+                fnr = np.nan
+            err = (fpr + fnr) / 2. if not (np.isnan(fpr) or np.isnan(fnr)) else np.nan
+
+            # --- Update log_data ---
             log_data['val_loss'] = val_loss
             log_data['val_acc'] = accuracy
             log_data['val_auc'] = auc
+            log_data['val_f1'] = f1
             log_data['val_err'] = err
             log_data['val_fpr'] = fpr
             log_data['val_fnr'] = fnr

@@ -363,10 +363,20 @@ def calculateError (pred,real):
 	real = [1 if x[1] >= 0.5 else 0 for x in real]
 	pred = np.array(pred)
 	real = np.array(real)
+	eq = np.equal(pred, real)
+	accuracy = float(eq.sum()) / pred.shape[0]
+	real_pos_count = (real == 1).sum()
+	real_neg_count = (real == 0).sum()
 	neq = np.not_equal(pred, real)
-	accuracy = float(neq.sum())/pred.shape[0]
-	fpr = float(np.logical_and(pred==1,neq).sum())/(real==0).sum()
-	fnr = float(np.logical_and(pred==0,neq).sum())/(real==1).sum()
+
+	# False Positives: Predicted 1, but was 0
+	fp = float(np.logical_and(pred == 1, neq).sum())
+	# False Negatives: Predicted 0, but was 1
+	fn = float(np.logical_and(pred == 0, neq).sum())
+
+	# Calculate rates, handling division by zero
+	fpr = fp / real_neg_count if real_neg_count > 0 else 0.0
+	fnr = fn / real_pos_count if real_pos_count > 0 else 0.0
 	return (accuracy, fpr, fnr)
 
 

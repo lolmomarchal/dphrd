@@ -35,17 +35,6 @@ class ResNet_dropout(nn.Module):
 			nn.Linear(projection_dim, projection_dim) # Final output 128D
 		)
 
-	def forward(self, x):
-		'''
-		Performs a standard forward pass of the ResNet architecture using the modified fully connected layers
-
-		Parameters:
-			x:		[tensor] The input tile image
-
-		Returns:
-			The activation values from the final output layer. Softmax is performed subsequently, independent from
-			the model.
-		'''
 
 	def forward(self, x):
 		# print(f"[DEBUG] Input shape: {x.shape}")  # (B, C, H, W)

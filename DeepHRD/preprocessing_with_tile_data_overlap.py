@@ -817,8 +817,7 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 
 
 	if np_img is None:
-		np_img = slide.open_image_np(img_path)
-
+		np_img = util.open_image_np(img_path)
 
 	row_tile_size = round(ROW_TILE_SIZE / SCALE_FACTOR)
 	col_tile_size = round(COL_TILE_SIZE / SCALE_FACTOR)
@@ -851,9 +850,11 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 	for t in tile_indices:
 		count += 1  # tile_num
 		r_s, r_e, c_s, c_e, r, c = t
-
-		np_tile = np_img[r_s:r_e+((r_e-r_s)*(stepSize-1)), c_s:c_e+((c_e-c_s)*(stepSize-1))]
-
+		grid_cell_h = row_tile_size * stepSize
+		grid_cell_w = col_tile_size * stepSize
+		r_e_grid = min(r_s + grid_cell_h, h)
+		c_e_grid = min(c_s + grid_cell_w, w)
+		np_tile = np_img[r_s:r_e_grid, c_s:c_e_grid]
 		t_p = util.tissue_percent(np_tile)
 		amount = tissue_quantity(t_p)
 		if amount == TissueQuantity.HIGH:
@@ -866,19 +867,28 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 			none += 1
 
 		o_c_s, o_r_s = small_to_large_mapping((c_s, r_s), (o_w, o_h))
-		o_c_e, o_r_e = small_to_large_mapping((c_e, r_e), (o_w, o_h))
+		o_c_e_grid, o_r_e_grid = small_to_large_mapping((c_e_grid, r_e_grid), (o_w, o_h)) # <-- Note: I see a typo here in your original file, should be o_h, not o_H. I'll assume it's o_h.
 
-		# pixel adjustment in case tile dimension too large (for example, 1025 instead of 1024)
-		if (o_c_e - o_c_s) > COL_TILE_SIZE:
-			o_c_e -= 1
-		if (o_r_e - o_r_s) > ROW_TILE_SIZE:
-			o_r_e -= 1
+		# +++ START FIX +++
+		# pixel adjustment in case tile dimension too large (e.g., 2049 vs 2048)
+
+		# Calculate the target high-res size based on stepSize
+		target_w = COL_TILE_SIZE * stepSize
+		target_h = ROW_TILE_SIZE * stepSize
+
+		if (o_c_e_grid - o_c_s) > target_w:
+			o_c_e_grid -= 1
+		if (o_r_e_grid - o_r_s) > target_h:
+			o_r_e_grid -= 1
+		# +++ END FIX +++
 
 		score, color_factor, s_and_v_factor, quantity_factor = score_tile(np_tile, t_p, slide_num, r, c)
 
 		np_scaled_tile = np_tile if small_tile_in_tile else None
-		tile = Tile(tile_sum, slide_num, np_scaled_tile, count, r, c, r_s, r_e, c_s, c_e, o_r_s, o_r_e, o_c_s,
-								o_c_e, t_p, color_factor, s_and_v_factor, quantity_factor, score)
+		tile = Tile(tile_sum, slide_num, np_scaled_tile, count, r, c,
+					r_s, r_e_grid, c_s, c_e_grid,  # Correct low-res grid coords
+					o_r_s, o_r_e_grid, o_c_s, o_c_e_grid,  # Correct high-res grid coords
+					t_p, color_factor, s_and_v_factor, quantity_factor, score)
 		tile_sum.tiles.append(tile)
 
 	tile_sum.count = count
@@ -963,6 +973,7 @@ def save_display_tile(tile,imageFile, save=True, removeBlurry = False):
 
 
 
+# +++ This is the NEW, FIXED code +++
 def tile_to_pil_tile(tile, imageSlide):
 	"""
 	Convert tile information into the corresponding tile as a PIL image read from the whole-slide image file.
@@ -976,40 +987,29 @@ def tile_to_pil_tile(tile, imageSlide):
 	t = tile
 	slide_filepath = util.get_training_slide_path(SRC_TRAIN_DIR, imageSlide)
 	s = util.openSlide(slide_filepath)
+
+	# +++ START FIX +++
+
+	# These coordinates are now the *correct* large-grid-cell coordinates
+	# (e.g., 2048x2048) because we saved them correctly in score_tiles
 	x, y = t.o_c_s, t.o_r_s
 	w, h = t.o_c_e - t.o_c_s, t.o_r_e - t.o_r_s
 
-	objective_powerInfo = pd.read_csv(os.path.join(BASE_DIR,"objectiveInfo.txt"), header=None, names=['objective_power'], index_col=0, sep="\t")
-	objective_power = int(objective_powerInfo.loc[t.slide_num, 'objective_power'])
+	# All the objective_power logic is REMOVED
 
-	if objective_power == 40:
-		if RESOLUTION == '5x':
-			w = w*8
-			h = h*8
-		elif RESOLUTION == '2.5x':
-			w = w*16
-			h = h*16
-		else:
-			w = w*2
-			h = h*2
-	elif objective_power ==20:
-		if RESOLUTION == '5x':
-			w = w*4
-			h = h*4
-		elif RESOLUTION == '2.5x':
-			w = w*8
-			h = h*8
-	else:
-		if RESOLUTION == '5x':
-			w = w*2
-			h = h*2
-		elif RESOLUTION == '2.5x':
-			w = w*4
-			h = h*4
+	# +++ END FIX +++
 
 	level = 0
+
+	# +++ START FIX +++
+	# This call is now correct and boundary-safe.
+	# It reads the full-sized region (e.g., 2048x2048 or a clamped 2048x1024 at the edge)
 	tile_region = s.read_region((x, y), level, (w, h))
+
+	# We resize the large region we just read down to 256x256 for saving
 	tile_region = tile_region.resize((256,256),Image.BILINEAR)
+	# +++ END FIX +++
+
 	# RGBA to RGB
 	pil_img = tile_region.convert("RGB")
 	return(pil_img)
@@ -1034,7 +1034,7 @@ def summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data, removeBl
 	np_img = util.open_image_np(img_path)
 	try:
 		tile_sum = score_tiles(slide_num, np_img)
-	except Exception:
+	except Exception as e:
 		print(e)
 
 	if save_data:
