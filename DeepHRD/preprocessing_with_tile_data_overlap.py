@@ -768,46 +768,15 @@ def score_tile(np_tile, tissue_percent, slide_num, row, col):
 
 def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=False):
 	"""
-	Score all tiles for a slide and return the results in a TileSummary object.
+    Score all tiles for a slide and return the results in a TileSummary object.
 
-	Args:
-		slide_num: The slide number.
-		np_img: Optional image as a NumPy array.
-		dimensions: Optional tuple consisting of (original width, original height, new width, new height). Used for dynamic
-			tile retrieval.
-		small_tile_in_tile: If True, include the small NumPy image in the Tile objects.
-
-	Returns:
-		TileSummary object which includes a list of Tile objects containing information about each tile.
-	"""
+    MODIFIED to:
+    1. Calculate high-resolution (Level 0) coordinates (SlideLab method).
+    2. Adjust tile read size based on magnification (SlideLab method).
+    """
 
 	objective_powerInfo = pd.read_csv(os.path.join(BASE_DIR,"objectiveInfo.txt"), header=None, names=['objective_power'], index_col=0, sep="\t")
 	objective_power = int(float(objective_powerInfo.loc[slide_num, 'objective_power']))
-	if objective_power == 40:
-		if RESOLUTION == '5x':
-			stepSize = 8
-		elif RESOLUTION == '20x':
-			stepSize = 2
-		elif RESOLUTION == '2.5x':
-			stepSize = 16
-	elif objective_power == 20:
-		if RESOLUTION == '5x':
-			stepSize = 4
-		elif RESOLUTION == '2.5x':
-			stepSize = 8
-		else:
-			stepSize = 1
-	else:
-		if RESOLUTION == '5x':
-			stepSize = 2
-		elif RESOLUTION == '2.5x':
-			stepSize = 4
-		elif RESOLUTION == '20x':
-			print(RESOLUTION + " is not supported at 10x magnification")
-			sys.exit()
-		else:
-			stepSize = 1
-
 
 	if dimensions is None:
 		img_path = get_filter_image_result(slide_num)
@@ -817,80 +786,162 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 
 
 	if np_img is None:
+		img_path = get_filter_image_result(slide_num)
 		np_img = util.open_image_np(img_path)
 
-	row_tile_size = round(ROW_TILE_SIZE / SCALE_FACTOR)
-	col_tile_size = round(COL_TILE_SIZE / SCALE_FACTOR)
-
+	row_tile_size_lowres = round(ROW_TILE_SIZE / SCALE_FACTOR)
+	col_tile_size_lowres = round(COL_TILE_SIZE / SCALE_FACTOR)
 
 	slidePath = util.get_training_slide_path(SRC_TRAIN_DIR, slide_num)
-
-	num_row_tiles, num_col_tiles = util.get_num_tiles(h, w, row_tile_size, col_tile_size)
+	num_row_tiles_est, num_col_tiles_est = util.get_num_tiles(h, w, row_tile_size_lowres, col_tile_size_lowres)
 
 	tile_sum = TileSummary(slide_num=slide_num,
-												 orig_w=o_w,
-												 orig_h=o_h,
-												 orig_tile_w=COL_TILE_SIZE,
-												 orig_tile_h=ROW_TILE_SIZE,
-												 scaled_w=w,
-												 scaled_h=h,
-												 scaled_tile_w=col_tile_size,
-												 scaled_tile_h=row_tile_size,
-												 tissue_percentage=util.tissue_percent(np_img),
-												 num_col_tiles=num_col_tiles,
-												 num_row_tiles=num_row_tiles)
+						   orig_w=o_w,
+						   orig_h=o_h,
+						   orig_tile_w=COL_TILE_SIZE,
+						   orig_tile_h=ROW_TILE_SIZE,
+						   scaled_w=w,
+						   scaled_h=h,
+						   scaled_tile_w=col_tile_size_lowres,
+						   scaled_tile_h=row_tile_size_lowres,
+						   tissue_percentage=util.tissue_percent(np_img),
+						   num_col_tiles=num_col_tiles_est,
+						   num_row_tiles=num_row_tiles_est)
 
+	# === START: NEW Magnification-Aware Sizing Logic ===
+
+	# 1. Get desired_magnification from RESOLUTION string (e.g., '5x' -> 5.0)
+	try:
+		desired_magnification = float(RESOLUTION.replace('x', ''))
+	except ValueError:
+		print(f"ERROR: RESOLUTION variable '{RESOLUTION}' is not a valid number (e.g., '5x', '20x').")
+		# Fallback to non-scaled logic
+		desired_magnification = objective_power
+
+	native_magnification = float(objective_power)
+
+	# # 2. Check for upsampling (SlideLab check)
+	# if native_magnification < desired_magnification and native_magnification > 0:
+	# 	print(f"Warning: Slide {slide_num} native mag ({native_magnification}x) is less than desired mag ({desired_magnification}x).")
+	# 	print("Skipping slide to avoid upsampling.")
+	# 	return tile_sum # Return empty summary
+
+	# 3. Calculate magnification scale factor
+	if desired_magnification <= 0 or native_magnification <= 0:
+		# Avoid division by zero if something went wrong
+		scale_factor = 1.0
+	else:
+		# e.g., 40x (native) / 5x (desired) = 8.0
+		scale_factor = native_magnification / desired_magnification
+
+		# 4. Calculate the *adjusted* high-res tile size to read
+	# This logic is from SlideLab's get_best_size_mag
+	high_res_adjusted_tile_w = int(round(COL_TILE_SIZE * scale_factor)) # e.g., 256 * 8.0 = 2048
+	high_res_adjusted_tile_h = int(round(ROW_TILE_SIZE * scale_factor)) # e.g., 256 * 8.0 = 2048
+
+	# === END: NEW Magnification-Aware Sizing Logic ===
+
+
+	# === START: SlideLab Coordinate Logic (using adjusted size) ===
+
+	# 1. Define high-res (Level 0) tile size (now using adjusted size)
+	high_res_tile_w = high_res_adjusted_tile_w
+	high_res_tile_h = high_res_adjusted_tile_h
+
+	# 2. Get the *overlap factor* (SlideLab's 'overlap')
+	global OVERLAP
+	if OVERLAP == 0.0:
+		overlap_factor = 1
+	else:
+		overlap_factor = int(round(1 / (1.0 - OVERLAP)))
+
+	# 3. Calculate the stride at Level 0 (based on adjusted size)
+	# This matches SlideLab's logic
+	if overlap_factor > 1:
+		stride_x = high_res_tile_w // overlap_factor
+		stride_y = high_res_tile_h // overlap_factor
+	else:
+		stride_x = high_res_tile_w
+		stride_y = high_res_tile_h
+
+	# 4. Generate the full list of high-res (Level 0) *starting* coordinates
+	# We use the original, high-res dimensions (o_w, o_h)
+	# This logic matches SlideLab's np.arange
+	high_res_x_coords = np.arange(0, o_w - high_res_tile_w + stride_x, stride_x)
+	high_res_y_coords = np.arange(0, o_h - high_res_tile_h + stride_y, stride_y)
+
+	# === END: SlideLab Coordinate Logic ===
+
+
+	# === START: Modified TILE LOOP ===
 	count = 0
 	high = 0
 	medium = 0
 	low = 0
 	none = 0
 
-	tile_indices = get_tile_indices(h, w, row_tile_size, col_tile_size, stepSize)
-	for t in tile_indices:
-		count += 1  # tile_num
-		r_s, r_e, c_s, c_e, r, c = t
-		grid_cell_h = row_tile_size * stepSize
-		grid_cell_w = col_tile_size * stepSize
-		r_e_grid = min(r_s + grid_cell_h, h)
-		c_e_grid = min(c_s + grid_cell_w, w)
-		np_tile = np_img[r_s:r_e_grid, c_s:c_e_grid]
-		t_p = util.tissue_percent(np_tile)
-		amount = tissue_quantity(t_p)
-		if amount == TissueQuantity.HIGH:
-			high += 1
-		elif amount == TissueQuantity.MEDIUM:
-			medium += 1
-		elif amount == TissueQuantity.LOW:
-			low += 1
-		elif amount == TissueQuantity.NONE:
-			none += 1
+	r_num = 1
+	for o_r_s_raw in high_res_y_coords:
+		c_num = 1
+		for o_c_s_raw in high_res_x_coords:
+			count += 1
 
-		o_c_s, o_r_s = small_to_large_mapping((c_s, r_s), (o_w, o_h))
-		o_c_e_grid, o_r_e_grid = small_to_large_mapping((c_e_grid, r_e_grid), (o_w, o_h)) # <-- Note: I see a typo here in your original file, should be o_h, not o_H. I'll assume it's o_h.
-		o_c_e_grid = min(o_c_e_grid, o_w)
-		o_r_e_grid = min(o_r_e_grid, o_h)
-		# +++ START FIX +++
-		# pixel adjustment in case tile dimension too large (e.g., 2049 vs 2048)
+			# --- High-Res (Level 0) Coordinates ---
+			# These are now for the *adjusted* size (e.g., 2048x2048)
+			o_r_s = int(o_r_s_raw)
+			o_c_s = int(o_c_s_raw)
+			o_r_e = int(o_r_s + high_res_tile_h) # e.g., 0 + 2048 = 2048
+			o_c_e = int(o_c_s + high_res_tile_w) # e.g., 0 + 2048 = 2048
 
-		# Calculate the target high-res size based on stepSize
-		target_w = COL_TILE_SIZE * stepSize
-		target_h = ROW_TILE_SIZE * stepSize
+			if o_r_e > o_h: o_r_e = o_h
+			if o_c_e > o_w: o_c_e = o_w
 
-		if (o_c_e_grid - o_c_s) > target_w:
-			o_c_e_grid -= 1
-		if (o_r_e_grid - o_r_s) > target_h:
-			o_r_e_grid -= 1
-		# +++ END FIX +++
+			# --- TISSUE CHECK (using low-res mask) ---
+			# Map high-res start/end coords to low-res mask coords
+			r_s_lowres = int(round(o_r_s / SCALE_FACTOR))
+			c_s_lowres = int(round(o_c_s / SCALE_FACTOR))
+			r_e_lowres = int(round(o_r_e / SCALE_FACTOR))
+			c_e_lowres = int(round(o_c_e / SCALE_FACTOR))
 
-		score, color_factor, s_and_v_factor, quantity_factor = score_tile(np_tile, t_p, slide_num, r, c)
+			if r_e_lowres <= r_s_lowres: r_e_lowres = r_s_lowres + 1
+			if c_e_lowres <= c_s_lowres: c_e_lowres = c_s_lowres + 1
 
-		np_scaled_tile = np_tile if small_tile_in_tile else None
-		tile = Tile(tile_sum, slide_num, np_scaled_tile, count, r, c,
-					r_s, r_e_grid, c_s, c_e_grid,  # Correct low-res grid coords
-					o_r_s, o_r_e_grid, o_c_s, o_c_e_grid,  # Correct high-res grid coords
-					t_p, color_factor, s_and_v_factor, quantity_factor, score)
-		tile_sum.tiles.append(tile)
+			if r_s_lowres >= h: continue
+			if c_s_lowres >= w: continue
+			if r_e_lowres > h: r_e_lowres = h
+			if c_e_lowres > w: c_e_lowres = w
+
+			np_tile = np_img[r_s_lowres:r_e_lowres, c_s_lowres:c_e_lowres]
+
+			if np_tile.size == 0:
+				t_p = 0.0
+			else:
+				t_p = util.tissue_percent(np_tile)
+
+			amount = tissue_quantity(t_p)
+			if amount == TissueQuantity.HIGH:
+				high += 1
+			elif amount == TissueQuantity.MEDIUM:
+				medium += 1
+			elif amount == TissueQuantity.LOW:
+				low += 1
+			elif amount == TissueQuantity.NONE:
+				none += 1
+
+			score, color_factor, s_and_v_factor, quantity_factor = score_tile(np_tile, t_p, slide_num, r_num, c_num)
+
+			np_scaled_tile = np_tile if small_tile_in_tile else None
+
+			# The o_r_s, o_r_e, o_c_s, o_c_e are now the *adjusted* high-res coords
+			tile = Tile(tile_sum, slide_num, np_scaled_tile, count, r_num, c_num,
+						r_s_lowres, r_e_lowres, c_s_lowres, c_e_lowres,
+						o_r_s, o_r_e, o_c_s, o_c_e,
+						t_p, color_factor, s_and_v_factor, quantity_factor, score)
+			tile_sum.tiles.append(tile)
+
+			c_num += 1
+		r_num += 1
+	# === END: MODIFIED TILE LOOP ===
 
 	tile_sum.count = count
 	tile_sum.high = high
@@ -905,9 +956,6 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 		t.rank = rank
 
 	return(tile_sum)
-
-
-
 def training_slide_range_to_images(start_ind, end_ind, train_images):
     from openslide import OpenSlideError
     count = 0
@@ -1468,7 +1516,7 @@ def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_
 	DEST_TRAIN_EXT = "tiff"
 	SCALE_FACTOR = 32
 	DEST_TRAIN_DIR = os.path.join(BASE_DIR, PROJECT + "_" + DEST_TRAIN_EXT)
-	TISSUE_HIGH_THRESH = 80
+	TISSUE_HIGH_THRESH = 70
 	TISSUE_LOW_THRESH = 10
 	RESOLUTION = '5x'
 	ROW_TILE_SIZE = 256

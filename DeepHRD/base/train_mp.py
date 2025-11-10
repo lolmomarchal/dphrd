@@ -18,7 +18,7 @@ import tqdm
 import warnings
 import csv
 import pandas as pd
-from sklearn.metrics import sklearn.metrics import roc_auc_score, accuracy_score, f1_score, confusion_matrix
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, confusion_matrix
 from pytorch_metric_learning import losses
 # To ignore all warnings:
 warnings.filterwarnings("ignore")
