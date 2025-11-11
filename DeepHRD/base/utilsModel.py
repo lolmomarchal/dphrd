@@ -450,6 +450,8 @@ class MILdataset(data.Dataset):
 	def modelState(self, mode):
 		'''Changes the current mode either to inference or training'''
 		self.mode = mode
+	def setTransforms(self, transforms):
+		self.transform = transforms
 
 	# --- This is the NEW, CORRECT maketraindata function ---
 	def maketraindata(self, idxs):

@@ -22,7 +22,7 @@ import torchvision.transforms as transforms
 import openslide
 import PIL.Image as Image
 Image.MAX_IMAGE_PIXELS = None
-
+import tqdm
 import os
 import sys
 import argparse
@@ -197,7 +197,10 @@ def inference (modelNumber, reps, t, loader, model):
 			instance_features = output_
 		
 		# Iterates over the test set using mini-batches
-		for i, (input, target) in enumerate(loader):
+		for i, (input, target, slide_ids) in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[TRAINING]"):
+			input = input.to(device, non_blocking= True )
+			target = target.to(device, non_blocking= True )  # Target shape is (B, 2), e.g., [[0.0, 1.0], [0.3, 0.7]]
+			slide_ids = slide_ids.to(device, non_blocking= True )
 			outputList = []
 			currentFeatures = []
 			currentProbs = []

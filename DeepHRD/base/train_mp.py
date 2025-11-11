@@ -435,6 +435,13 @@ def main():
                                 transforms.RandomRotation(180),
                                 transforms.ColorJitter(brightness=0.5, contrast=[0.2, 1.8], saturation=0, hue=0),
                                 transforms.ToTensor(), normalize])
+    infer_trans = transforms.Compose([
+        transforms.ToTensor(),
+        normalize
+    ])
+
+
+
     # 6. Dataset start
     train_dset = ut.MILdataset(args.train_lib, trans)
     if device == "cpu":
@@ -443,7 +450,7 @@ def main():
         pin_memory = True
 
     if args.val_lib:
-        val_dset = ut.MILdataset(args.val_lib, trans)
+        val_dset = ut.MILdataset(args.val_lib, infer_trans)
         val_loader = torch.utils.data.DataLoader(
             val_dset,
             batch_size=args.batch_size, shuffle=False,
@@ -464,6 +471,7 @@ def main():
             break
         # i. start with overall inference
         train_dset.modelState(1)
+        train_dset.setTransforms(infer_trans)
         infer_loader = torch.utils.data.DataLoader(
             train_dset,
             batch_size=args.batch_size, shuffle=False,
@@ -487,6 +495,8 @@ def main():
             num_workers=args.workers,
             pin_memory=pin_memory)
         train_dset.modelState(2)
+        train_dset.setTransforms(trans)
+
         train_loss, train_inst_loss = train(epoch + 1, train_loader_new, model,
                                             criterion, criterion_supcon, optimizer, # <-- Pass new criterion
                                             lambda_reg=0.2,
