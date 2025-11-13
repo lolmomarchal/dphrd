@@ -54,7 +54,7 @@ parser.add_argument('--gpu', default=0, type=int, help='Gpu device selection.')
 parser.add_argument('--patience', default=20, type=int, help='Gpu device selection.')
 
 # --- NEW ARGUMENTS ---
-parser.add_argument('--loss_fn', type=str, default='focal', choices=['ce', 'focal'],
+parser.add_argument('--loss_fn', type=str, default='ce', choices=['ce', 'focal'],
                     help='Loss function to use (ce or focal).')
 parser.add_argument('--focal_gamma', type=float, default=2.0, help='Gamma parameter for Focal Loss.')
 parser.add_argument('--focal_alpha', type=float, default=None,
@@ -569,6 +569,8 @@ def main():
                     'best_val_loss': best_val_loss,
                     'optimizer': optimizer.state_dict()
                 }
+                save_path = os.path.join(args.output, f'checkpoint_best_{args.resolution}_epoch_{epoch + 1}.pth')
+                torch.save(obj, save_path)
             else:
                 early_stop += 1
 
