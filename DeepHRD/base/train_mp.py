@@ -20,15 +20,11 @@ import csv
 import pandas as pd
 from sklearn.metrics import roc_auc_score, accuracy_score, f1_score, confusion_matrix
 from pytorch_metric_learning import losses
+from torch.cuda.amp import autocast
 # To ignore all warnings:
 warnings.filterwarnings("ignore")
-
-# To ignore specific categories of warnings (e.g., DeprecationWarning):
 warnings.filterwarnings("ignore", category=DeprecationWarning)
-
-# To ignore warnings from a specific module (e.g., tensorflow):
 warnings.filterwarnings("ignore", module="tensorflow")
-warnings.filterwarnings('ignore')
 # ============== PARSER =====================
 parser = argparse.ArgumentParser(description='Multi-Resolution biomarker classifier training script - 2022')
 parser.add_argument('--train_lib', type=str, default='',
@@ -156,17 +152,19 @@ def inference(loader, model, criterion, enable_dropout_flag = False):
             target = target.to(device)
             batch_size = input.size(0)
             total_samples += batch_size
+            if device == "cuda":
+                with autocast():
+                    logits = model(input)
+                    output = F.softmax(logits, dim=1)
+                    loss = criterion(logits, target)
+            else:
+                logits = model(input)
+                output = F.softmax(logits, dim=1)
+                loss = criterion(logits, target)
 
-            # 1. Forward Pass (model.eval() ensures ONLY logits are returned)
-            logits = model(input)
-            output = F.softmax(logits, dim=1)
-            loss = criterion(logits, target)
-
-            # 2. Aggregation (Corrected Indentation - INSIDE the batch loop)
             running_loss += loss.item() * batch_size
             probs_list.append(output.detach()[:, 1].clone().cpu())
 
-            # 3. Slide Output Tracking (Corrected Indentation - INSIDE the batch loop)
             for sid, t, p in zip(slide_ids.cpu().numpy(), target.cpu(), output[:, 1].cpu()):
                 sid_key = int(sid)
                 if sid_key not in slide_outputs:
