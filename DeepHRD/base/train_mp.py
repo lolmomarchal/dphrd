@@ -41,7 +41,7 @@ parser.add_argument('--batch_size', type=int, default=64, help='Mini-batch size.
 parser.add_argument('--epochs', type=int, default=200, help='Number of training epochs.')
 parser.add_argument('--validation_interval', default=1, type=int,
                     help='How often to run inference on the validation set.')
-parser.add_argument('--k', default=40, type=int,
+parser.add_argument('--k', default=100, type=int,
                     help='The top k tiles based on predicted model probabilities used as representative features of the training classes for each slide.')
 parser.add_argument('--checkpoint', default=None, type=str,
                     help='Checkpoint model to restart a given training session or for transfer learning.')
@@ -130,11 +130,19 @@ class FocalLossWithProbs(nn.Module):
 
 
 # ================= EVAL AND TRAIN METHODS =================================================
-def inference(loader, model, criterion):
+def enable_dropout(model):
+    for m in model.modules():
+        if m.__class__.__name__.startswith('Dropout'):
+            m.train()
+
+def inference(loader, model, criterion, enable_dropout_flag = False):
     model.eval()
     if len(loader.dataset) == 0:
         print("[WARNING] Warning: Inference dataset is empty.")
         return np.array([]), 0.0
+    if enable_dropout_flag:
+        print("[INFO] inference is running with ENABLED dropout for top-k selection")
+        enable_dropout(model)
 
     probs_list = []
     running_loss = 0.0
@@ -476,7 +484,7 @@ def main():
             train_dset,
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=pin_memory)
-        probs, loss = inference(infer_loader, model, criterion)
+        probs, loss = inference(infer_loader, model, criterion, enable_dropout_flag=True)
         if probs.size == 0:
             print("\n[FATAL ERROR] Inference returned an empty probability array. Cannot group tiles.")
             # return
@@ -484,10 +492,11 @@ def main():
         if not np.issubdtype(probs.dtype, np.number):
             print(f"\n[FATAL ERROR] Probabilities dtype is non-numeric: {probs.dtype}. Cannot sort.")
 
-        topk = ut.groupTopKtiles(np.array(train_dset.slideIDX), probs,
-                                 args.k)  # get top-k tiles for training + prediction
+        # topk = ut.groupTopKtiles(np.array(train_dset.slideIDX), probs,
+        #                          args.k)  # get top-k tiles for training + prediction
         # ii. start with training based on top instances
-        train_dset.maketraindata(topk)
+        # train_dset.maketraindata(topk)
+        train_dset.maket_data(probs, args.k)
         train_loader_new = torch.utils.data.DataLoader(
             train_dset,
             batch_size=args.batch_size,
@@ -516,7 +525,7 @@ def main():
         # iii. inference on validation
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
-            probs, val_loss = inference(val_loader, model, criterion)
+            probs, val_loss = inference(val_loader, model, criterion, enable_dropout_flag=False)
 
 
             maxs = ut.groupTopKtilesProbabilities(np.array(val_dset.slideIDX), probs, len(val_dset.targets))
@@ -537,7 +546,6 @@ def main():
                 fnr = fn / (fn + tp) if (fn + tp) > 0 else 0.0
 
             except ValueError:
-                # This can happen if true_labels_1d contains only one class (e.g., all 0s or all 1s)
                 print(f"Warning: Could not calculate confusion matrix at epoch {epoch + 1}. True labels might contain only one class.")
                 fpr = np.nan
                 fnr = np.nan
@@ -571,9 +579,11 @@ def main():
             writer.writerow([
                 log_data['epoch'],
                 f"{log_data['train_loss']:.6f}",
+                f"{log_data['train_inst_loss']:.6f}",
                 f"{log_data['val_loss']:.6f}" if not np.isnan(log_data['val_loss']) else '',
                 f"{log_data['val_acc']:.6f}" if not np.isnan(log_data['val_acc']) else '',
                 f"{log_data['val_auc']:.6f}" if not np.isnan(log_data['val_auc']) else '',
+                f"{log_data['val_f1']:.6f}" if not np.isnan(log_data['val_auc']) else '',
                 f"{log_data['val_err']:.6f}" if not np.isnan(log_data['val_err']) else '',
                 f"{log_data['val_fpr']:.6f}" if not np.isnan(log_data['val_fpr']) else '',
                 f"{log_data['val_fnr']:.6f}" if not np.isnan(log_data['val_fnr']) else ''

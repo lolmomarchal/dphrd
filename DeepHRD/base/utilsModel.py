@@ -431,29 +431,104 @@ class MILdataset(data.Dataset):
 			self.slidenames = []
 		else:
 			print(f"[INFO MILdataset] Loading tiles from '{libraryfile}'...")
-			# This logic is correct for your 'list of lists' structure
 			for i, g in enumerate(lib['tiles']):
 				grid.extend(g)
 				slideIDX.extend([i] * len(g))
 
 			self.slidenames = lib['slides']
 			self.targets = lib['targets']
-			self.subtype = lib ["subtype"]# This is your list of torch.Tensors
+			self.subtype = lib ["subtype"]
 			self.grid = grid
 			self.slideIDX = slideIDX
 			print(f"[INFO MILdataset] Loaded {len(self.grid)} total tiles from {len(self.slidenames)} slides.")
 
 		self.transform = transform
-		self.mode = 1  # Default to inference mode
-		self.t_data = [] # Initialize t_data
+		self.mode = 1
+		self.t_data = []
 
 	def modelState(self, mode):
 		'''Changes the current mode either to inference or training'''
 		self.mode = mode
 	def setTransforms(self, transforms):
 		self.transform = transforms
+	def maket_data(self,all_tile_probs,k):
+		slide_to_all_tiles = defaultdict(list)
+		if len(self.grid) != len(all_tile_probs):
+			print(f"[ERROR] maket_data: Mismatch! Have {len(self.grid)} tiles but {len(all_tile_probs)} probs. Aborting.")
+			self.t_data = []
+			return
 
-	# --- This is the NEW, CORRECT maketraindata function ---
+		for i in range(len(self.grid)):
+			slide_id = self.slideIDX[i]
+			tile_data = (
+				self.grid[i],             # 0: tile_path
+				self.targets[slide_id],   # 1: target
+				all_tile_probs[i],         # 2: prob
+				self.subtype[slide_id]    # 3: subtype
+			)
+			slide_to_all_tiles[slide_id].append(tile_data)
+
+		unique_slide_ids = list(slide_to_all_tiles.keys())
+
+		if not unique_slide_ids:
+			print("[ERROR] maket_data: No slide IDs found. t_data will be empty.")
+			self.t_data = []
+			return
+
+		# 3. Perform weighted slide sampling (same logic as before)
+		try:
+			slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
+			from collections import Counter
+			subtype_counts = Counter(slide_subtypes)
+			subtype_weights = {
+				subtype: 1.0 / count for subtype, count in subtype_counts.items()
+			}
+			slide_weights = [subtype_weights[subtype] for subtype in slide_subtypes]
+
+			# This samples *with replacement*, so a rare slide can appear multiple times
+			shuffled_slide_ids = random.choices(
+				population=unique_slide_ids,
+				weights=slide_weights,
+				k=len(unique_slide_ids) # Sample N times, where N=num_slides
+			)
+			print(f"[INFO] maket_data: Sampled {len(shuffled_slide_ids)} slides (with replacement) based on subtype counts: {subtype_counts}")
+
+		except Exception as e:
+			print(f"[ERROR] maket_data: Error during weighting: {e}. Falling back to random.shuffle.")
+			shuffled_slide_ids = unique_slide_ids
+			random.shuffle(shuffled_slide_ids)
+
+		# 4. Build the new t_data by dynamically sampling tiles
+		self.t_data = []
+		for slide_id in shuffled_slide_ids:
+
+			all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
+			sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
+
+
+			candidate_pool_size = min(len(sorted_tiles), max(k * 3, 100))
+			candidate_pool = sorted_tiles[:candidate_pool_size]
+			pool_probs = torch.tensor([t[2] for t in candidate_pool], dtype=torch.float32) + 1e-6
+			num_to_sample = min(k, len(candidate_pool))
+			if num_to_sample == 0:
+				continue
+			try:
+				sampled_indices = torch.multinomial(pool_probs, num_samples=num_to_sample, replacement=False)
+			except RuntimeError as e:
+				print(f"[WARN] torch.multinomial failed for slide {slide_id}: {e}. Skipping slide.")
+				continue
+			for idx in sampled_indices:
+				tile_to_add = candidate_pool[idx]
+
+				final_tile_data = (
+					slide_id,       # slide_id
+					tile_to_add[0], # tile_path
+					tile_to_add[1]  # target
+				)
+				self.t_data.append(final_tile_data)
+
+		print(f"[INFO] maket_data: Created new training set with {len(self.t_data)} dynamically sampled tiles.")
+
 	def maketraindata(self, idxs):
 		'''
         Generates the training dataset by performing WEIGHTED SAMPLING of slides
@@ -469,15 +544,9 @@ class MILdataset(data.Dataset):
 				continue
 
 			slide_id = self.slideIDX[x]
-
-			# --- [THIS IS THE MISSING LINE] ---
-			# This line defines the 'tile_data' variable before it's used.
 			tile_data = (slide_id, self.grid[x], self.targets[slide_id])
 			slide_id = self.slideIDX[x]
 			slide_to_tiles[slide_id].append(tile_data)
-
-		# 2. Get a list of all unique slide IDs that have tiles *in this epoch*
-		#    This is the "available samples" list you're talking about.
 		unique_slide_ids = list(slide_to_tiles.keys())
 
 		if not unique_slide_ids:
@@ -485,7 +554,6 @@ class MILdataset(data.Dataset):
 			self.t_data = []
 			return
 
-		# --- [THIS IS THE DYNAMIC WEIGHTING LOGIC] ---
 		try:
 				# 3. Get the subtype for *only these available slides*
 				slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
