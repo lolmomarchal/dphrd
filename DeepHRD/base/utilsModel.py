@@ -388,23 +388,10 @@ import torch
 import numpy as np
 import random
 from collections import defaultdict
-from PIL import Image # Make sure PIL is imported
+from PIL import Image #
 
-# --- This helper function is needed by __getitem__ ---
 def safe_open(path):
-	"""
-    Tries to open an image path. Returns a blank white image on failure.
-    """
-	try:
-		# Assuming path is a path-like object
 		return Image.open(path)
-	except Exception as e:
-		print(f"Error opening image {path}: {e}")
-		# Return a blank white image on failure
-		return Image.new('RGB', (224, 224), (255, 255, 255))
-
-	# --- REPLACE YOUR ENTIRE MILdataset CLASS WITH THIS ---
-
 class MILdataset(data.Dataset):
 	'''
     Class edited used from (https://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
