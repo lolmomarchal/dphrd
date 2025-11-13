@@ -32,7 +32,7 @@ def safe_open(path):
         raise
 
 
-def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, dropoutRate, resolution, workers, epochs, checkpointModel=None):
+def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, dropoutRate, resolution, workers, epochs, checkpointModel=None,disable_weighted_sampling=False):
 	for currentModel in iModels:
 		if resolution == "5x":
 			testCommand = pythonVersion + " base/train_mp.py --train_lib " + os.path.join(outputPath, "trainData.pt") + " --val_lib " + os.path.join(outputPath, "valData.pt") +  " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) +  " --batch_size " + str(batch_size) + " --gpu " + str(i) + " --dropoutRate " + str(dropoutRate) + " --resolution " + resolution + " --workers " + str(workers) + " --epochs " + str(epochs)
@@ -44,6 +44,8 @@ def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, drop
 		# time.sleep(random.randrange(0, 4))
 		if checkpointModel:
 			testCommand += " --model " + checkpointModel
+		if disable_weighted_sampling:
+			testCommand += " --disable_weighted_sampling"
 		os.system(testCommand)
 		torch.cuda.empty_cache()
 
@@ -398,7 +400,7 @@ class MILdataset(data.Dataset):
     Instantiates a MIL dataset.
     '''
 
-	def __init__(self, libraryfile, transform=None):
+	def __init__(self, libraryfile, transform=None,disable_weighted_sampling = False):
 		'''
         Initializes all class atributes.
         *** This is your original __init__ logic, which is CORRECT for your data. ***
@@ -428,7 +430,7 @@ class MILdataset(data.Dataset):
 			self.grid = grid
 			self.slideIDX = slideIDX
 			print(f"[INFO MILdataset] Loaded {len(self.grid)} total tiles from {len(self.slidenames)} slides.")
-
+		self.disable_weighted_sampling = disable_weighted_sampling
 		self.transform = transform
 		self.mode = 1
 		self.t_data = []
@@ -463,56 +465,61 @@ class MILdataset(data.Dataset):
 			return
 
 		# 3. Perform weighted slide sampling (same logic as before)
-		try:
-			slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
-			from collections import Counter
-			subtype_counts = Counter(slide_subtypes)
-			subtype_weights = {
-				subtype: 1.0 / count for subtype, count in subtype_counts.items()
-			}
-			slide_weights = [subtype_weights[subtype] for subtype in slide_subtypes]
+		if not self.disable_weighted_sampling:
+			try:
+				slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
+				from collections import Counter
+				subtype_counts = Counter(slide_subtypes)
+				subtype_weights = {
+					subtype: 1.0 / count for subtype, count in subtype_counts.items()
+				}
+				slide_weights = [subtype_weights[subtype] for subtype in slide_subtypes]
 
-			# This samples *with replacement*, so a rare slide can appear multiple times
-			shuffled_slide_ids = random.choices(
-				population=unique_slide_ids,
-				weights=slide_weights,
-				k=len(unique_slide_ids) # Sample N times, where N=num_slides
-			)
-			print(f"[INFO] maket_data: Sampled {len(shuffled_slide_ids)} slides (with replacement) based on subtype counts: {subtype_counts}")
+				# This samples *with replacement*, so a rare slide can appear multiple times
+				shuffled_slide_ids = random.choices(
+					population=unique_slide_ids,
+					weights=slide_weights,
+					k=len(unique_slide_ids) # Sample N times, where N=num_slides
+				)
+				print(f"[INFO] maket_data: Sampled {len(shuffled_slide_ids)} slides (with replacement) based on subtype counts: {subtype_counts}")
 
-		except Exception as e:
-			print(f"[ERROR] maket_data: Error during weighting: {e}. Falling back to random.shuffle.")
+			except Exception as e:
+				print(f"[ERROR] maket_data: Error during weighting: {e}. Falling back to random.shuffle.")
+				shuffled_slide_ids = unique_slide_ids
+				random.shuffle(shuffled_slide_ids)
+		else:
+			print(f"[INFO] maketraindata: Shuffling {len(unique_slide_ids)} slides (NO weighting).")
 			shuffled_slide_ids = unique_slide_ids
 			random.shuffle(shuffled_slide_ids)
 
-		# 4. Build the new t_data by dynamically sampling tiles
+			# 4. Build the new t_data by dynamically sampling tiles
 		self.t_data = []
 		for slide_id in shuffled_slide_ids:
 
-			all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
-			sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
+				all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
+				sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
 
 
-			candidate_pool_size = min(len(sorted_tiles), max(k * 3, 100))
-			candidate_pool = sorted_tiles[:candidate_pool_size]
-			pool_probs = torch.tensor([t[2] for t in candidate_pool], dtype=torch.float32) + 1e-6
-			num_to_sample = min(k, len(candidate_pool))
-			if num_to_sample == 0:
-				continue
-			try:
-				sampled_indices = torch.multinomial(pool_probs, num_samples=num_to_sample, replacement=False)
-			except RuntimeError as e:
-				print(f"[WARN] torch.multinomial failed for slide {slide_id}: {e}. Skipping slide.")
-				continue
-			for idx in sampled_indices:
-				tile_to_add = candidate_pool[idx]
+				candidate_pool_size = min(len(sorted_tiles), max(k * 3, 100))
+				candidate_pool = sorted_tiles[:candidate_pool_size]
+				pool_probs = torch.tensor([t[2] for t in candidate_pool], dtype=torch.float32) + 1e-6
+				num_to_sample = min(k, len(candidate_pool))
+				if num_to_sample == 0:
+					continue
+				try:
+					sampled_indices = torch.multinomial(pool_probs, num_samples=num_to_sample, replacement=False)
+				except RuntimeError as e:
+					print(f"[WARN] torch.multinomial failed for slide {slide_id}: {e}. Skipping slide.")
+					continue
+				for idx in sampled_indices:
+					tile_to_add = candidate_pool[idx]
 
-				final_tile_data = (
-					slide_id,       # slide_id
-					tile_to_add[0], # tile_path
-					tile_to_add[1]  # target
-				)
-				self.t_data.append(final_tile_data)
+					final_tile_data = (
+						slide_id,       # slide_id
+						tile_to_add[0], # tile_path
+						tile_to_add[1]  # target
+					)
+					self.t_data.append(final_tile_data)
 
 		print(f"[INFO] maket_data: Created new training set with {len(self.t_data)} dynamically sampled tiles.")
 

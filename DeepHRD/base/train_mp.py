@@ -55,7 +55,7 @@ parser.add_argument('--loss_fn', type=str, default='ce', choices=['ce', 'focal']
 parser.add_argument('--focal_gamma', type=float, default=2.0, help='Gamma parameter for Focal Loss.')
 parser.add_argument('--focal_alpha', type=float, default=None,
                     help='Alpha parameter (class weight) for Focal Loss. If None, uses --weights argument if not 0.5.')
-
+parser.add_argument('--disable_weighted_sampling', action='store_true', help='Disable weighted sampling by subtype during training.')
 
 # ================ LOSS ======================
 
@@ -365,11 +365,12 @@ best_val_loss = np.inf
 
 def main():
     # 1. Initiate params + output
-    torch.set_num_threads(1)
+    # torch.set_num_threads(1)
     global best_val_loss, device, args
     args = parser.parse_args()
     resolution = args.resolution
     os.makedirs(args.output, exist_ok=True)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu":
         print(f"[INFO] no CUDA device available. If this is a mistake please check your setup.")
@@ -432,7 +433,7 @@ def main():
 
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
-    cudnn.benchmark = False
+    cudnn.benchmark = True
 
     # 5. Transforms
     normalize = transforms.Normalize(mean=[0.485, 0.406, 0.406], std=[0.229, 0.224, 0.225])
@@ -449,7 +450,7 @@ def main():
 
 
     # 6. Dataset start
-    train_dset = ut.MILdataset(args.train_lib, trans)
+    train_dset = ut.MILdataset(args.train_lib, trans, disable_weighted_sampling=args.disable_weighted_sampling)
     if device == "cpu":
         pin_memory = False
     else:
