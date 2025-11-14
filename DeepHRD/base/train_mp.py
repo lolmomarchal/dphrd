@@ -432,7 +432,7 @@ def main():
         criterion = FocalLossWithProbs(alpha=alpha_w, gamma=args.focal_gamma).to(device, non_blocking= True )
 
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
     cudnn.benchmark = True
 
     # 5. Transforms
@@ -507,7 +507,7 @@ def main():
 
         train_loss, train_inst_loss = train(epoch + 1, train_loader_new, model,
                                             criterion, criterion_supcon, optimizer, # <-- Pass new criterion
-                                            lambda_reg=0.2,
+                                            lambda_reg=0.,
                                             device=device)
         log_data = {
             'epoch': epoch + 1,
@@ -530,8 +530,8 @@ def main():
             maxs = ut.groupTopKtilesProbabilities(np.array(val_dset.slideIDX), probs, len(val_dset.targets))
 
             true_labels_tensors = val_dset.targets
-            true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])
-
+            # true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])
+            true_labels_1d = np.array([1 if t[1] >= 0.5 else 0 for t in true_labels_tensors])
             pred_binary = np.array([1 if x >= 0.5 else 0 for x in maxs])
             auc = roc_auc_score(true_labels_1d, maxs)
             accuracy = accuracy_score(true_labels_1d, pred_binary)
