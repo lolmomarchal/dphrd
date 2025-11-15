@@ -22,18 +22,46 @@ import torch
 import numpy as np
 from PIL import Image #
 
-def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, dropoutRate, resolution, workers, epochs, checkpointModel=None):
+def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, dropoutRate, resolution, workers, epochs, checkpointModel=None, validation_interval=1, k=100, weights=0.5, patience=40, sampling_mode='dampened_combined', lambda_sup=0.3, loss_fn='ce', focal_gamma=2.0, focal_alpha=None, k_sup=10, train_inference_dropout_enabled=False, train_inference_transforms_enabled=False):
 	for currentModel in iModels:
+
+		# Base command with all common parameters
+		base_command = (
+			f"{pythonVersion} base/train_mp.py "
+			f"--output {os.path.join(outputPath, 'training_m' + str(currentModel+1))} "
+			f"--batch_size {str(batch_size)} --gpu {str(i)} "
+			f"--dropoutRate {str(dropoutRate)} --resolution {resolution} "
+			f"--workers {str(workers)} --epochs {str(epochs)} "
+			f"--validation_interval {str(validation_interval)} "
+			f"--k {str(k)} --weights {str(weights)} "
+			f"--patience {str(patience)} --sampling_mode {sampling_mode} "
+			f"--lambda_sup {str(lambda_sup)} --loss_fn {loss_fn} "
+			f"--focal_gamma {str(focal_gamma)} --k_sup {str(k_sup)}"
+		)
+
+		if checkpointModel:
+			base_command += f" --checkpoint {checkpointModel}"
+		if focal_alpha is not None:
+			base_command += f" --focal_alpha {str(focal_alpha)}"
+		if train_inference_dropout_enabled:
+			base_command += f" --train_inference_dropout_enabled"
+		if train_inference_transforms_enabled:
+			base_command += f" --train_inference_transforms_enabled"
 		if resolution == "5x":
-			testCommand = pythonVersion + " base/train_mp.py --train_lib " + os.path.join(outputPath, "trainData.pt") + " --val_lib " + os.path.join(outputPath, "valData.pt") +  " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) +  " --batch_size " + str(batch_size) + " --gpu " + str(i) + " --dropoutRate " + str(dropoutRate) + " --resolution " + resolution + " --workers " + str(workers) + " --epochs " + str(epochs)
+			trainCommand = (
+				f"--train_lib {os.path.join(outputPath, 'trainData.pt')} "
+				f"--val_lib {os.path.join(outputPath, 'valData.pt')} "
+			)
+			testCommand = f"{base_command} {trainCommand}"
 		elif resolution == "20x":
-			testCommand = pythonVersion + " base/train_mp.py --train_lib " + os.path.join(outputPath, "training_20x_m" + str(currentModel+1), "trainData20x.pt") + " --val_lib " + os.path.join(outputPath, "training_20x_m" + str(currentModel+1), "valData20x.pt") +  " --output " + os.path.join(outputPath, "training_20x_m" + str(currentModel+1)) +  " --batch_size " + str(batch_size) + " --gpu " + str(i) + " --dropoutRate " + str(dropoutRate) + " --resolution " + resolution + " --workers " + str(workers) + " --epochs " + str(epochs)
+			trainCommand = (
+				f"--train_lib {os.path.join(outputPath, 'training_20x_m' + str(currentModel+1), 'trainData20x.pt')} "
+				f"--val_lib {os.path.join(outputPath, 'training_20x_m' + str(currentModel+1), 'valData20x.pt')} "
+			)
+			testCommand = f"{base_command} {trainCommand}"
 		else:
 			print("Resolution " + resolution + " is not currently supported.")
 			sys.exit()
-		if checkpointModel:
-			testCommand += " --model " + checkpointModel
-
 		try:
 			print(testCommand)
 			os.system(testCommand)

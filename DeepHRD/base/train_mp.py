@@ -445,7 +445,7 @@ def main():
 
         supcon_loader = torch.utils.data.DataLoader(
             supcon_dset,
-            batch_size=args.batch_size,
+            batch_size=args.batch_size*8,
             shuffle=True,
             num_workers=args.workers,
             pin_memory=pin_memory)

@@ -29,7 +29,7 @@ import pandas as pd
 import plotProbabilityMasks
 import multiprocessing
 import torch
-
+import yaml
 
 # python3 DeepHRD_train.py --projectPath /restricted/alexandrov-ddn/users/ebergstr/histology/BRCA/TCGA/test/ --project BRCA --output /restricted/alexandrov-ddn/users/ebergstr/histology/BRCA/TCGA/test/output/ --max_gpu 1 --ensemble 5 --dropoutRate 0.7 --python python3 --metadata /restricted/alexandrov-ddn/users/ebergstr/histology/data/BRCA_HRD_DeepHRD_flash_frozen_meta.txt --preprocess --stainNorm --softLabel --generateDataSets --train5x --pullROIs --train20x --workers 16
 # python3 DeepHRD_train.py --projectPath /restricted/alexandrov-ddn/users/ebergstr/histology/BRCA/TCGA/test/ --project BRCA --output /restricted/alexandrov-ddn/users/ebergstr/histology/BRCA/TCGA/test/output2/ --max_gpu 4 --ensemble 4 --dropoutRate 0.7 --python python3 --metadata /restricted/alexandrov-ddn/users/ebergstr/histology/data/BRCA_HRD_DeepHRD_flash_frozen_meta.txt --stainNorm --softLabel --generateDataSets --train5x --calcFeatures --pullROIs --train20x --workers 16 --epochs 10
@@ -75,14 +75,35 @@ def main ():
 	parser.add_argument('--pullROIs', action='store_true', help='Pull regions of interest                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    using each 5x model.')
 	parser.add_argument('--best5xModels', nargs='+', type=int, default=None, help='Provide a list of best models to use for the 5x training (Use the epoch number; i.e. checkpoint_best_5x_150.pth would be model 150). You should provide 1 value per ensemble model (i.e. ensemble of 5 models should have 5 model numbers. Default will use the final saved checkpoints after training the 5x model.')
 	parser.add_argument('--epochs', type=int, default=200, help='Number of training epochs.')
+	# Arguments from train_mp.py
+	parser.add_argument('--validation_interval', default=1, type=int,
+						help='How often to run inference on the validation set.')
+	parser.add_argument('--k', default=100, type=int,
+						help='The top k tiles based on predicted model probabilities used as representative features of the training classes for each slide.')
+	parser.add_argument('--weights', default=0.5, type=float, help='Unbalanced positive class weight (for CE loss).')
+	parser.add_argument('--patience', default=40, type=int, help='Early stopping patience (number of epochs).')
+	parser.add_argument('--sampling_mode', type=str, default='dampened_combined',
+						choices=['none', 'dampened_subtype', 'balanced_subtype', 'dampened_target', 'balanced_target',
+								 'dampened_combined', 'balanced_combined'],
+						help='Strategy for pre-epoch slide sampling.')
+	parser.add_argument('--lambda_sup', default=0.3, type=float, help='Weight for the supervised contrastive loss (lambda_reg).')
+	parser.add_argument('--loss_fn', type=str, default='ce', choices=['ce', 'focal'],
+						help='Loss function to use (ce or focal).')
+	parser.add_argument('--focal_gamma', type=float, default=2.0, help='Gamma parameter for Focal Loss.')
+	parser.add_argument('--focal_alpha', type=float, default=None,
+						help='Alpha parameter (class weight) for Focal Loss. If None, uses --weights argument if not 0.5.')
+	parser.add_argument('--k_sup', default=10, type=int,
+						help='The top k tiles per slide used specifically for the supervised contrastive loss.')
 
-    # extra args
+	# extra args
 	parser.add_argument('--removeBlurry', action='store_true', help='Removes blurry tiles')
-	parser.add_argument('--disable_weighted_sampling', action='store_true', help='Disable weighted sampling by subtype during training.')
+	# parser.add_argument('--disable_weighted_sampling', action='store_true', help='Disable weighted sampling by subtype during training. (DEPRECATED: Use --sampling_mode none)')
 
+	parser.add_argument('--train_inference_dropout_enabled', action='store_true',
+						help='Enable dropout for the inference step on the training set (top-k selection). Default is False.')
+	parser.add_argument('--train_inference_transforms_enabled', action='store_true',
+						help='Apply training transforms (flipping, color jitter) during the inference step on the training set. Default is False.')
 	args = parser.parse_args()
-
-
 	max_process_per_gpu = 1
 
 	save_top_tiles=True
@@ -100,6 +121,17 @@ def main ():
 		os.makedirs(outputPath)
 
 	tilePath = os.path.join(args.projectPath, "tiles_png")
+
+	# configuration for yml (just so i know what experiment it is)
+	config_log = vars(args).copy()
+
+	# Save the configuration to a YAML file in the output directory
+	log_path = os.path.join(outputPath, 'training_config.yaml')
+	with open(log_path, 'w') as f:
+		yaml.dump(config_log, f, default_flow_style=False)
+
+	print(f"\n[INFO] Configuration saved to: {log_path}\n", flush=True)
+
 
 
 
@@ -181,9 +213,29 @@ def main ():
 	if args.train5x:
 		print("\tTraining " + str(args.ensemble) + " models at 5x resolution. You can check progress of each model at " + os.path.join(outputPath, "training_m[model_number]"), flush=True)
 		pool = multiprocessing.Pool(max_seed * max_process_per_gpu)
+		training_params = {
+			'batch_size': args.batch_size,
+			'dropoutRate': args.dropoutRate,
+			'resolution': "5x",
+			'workers': args.workers,
+			'epochs': args.epochs,
+			'checkpointModel': args.checkpointModel,
+			'validation_interval': args.validation_interval,
+			'k': args.k,
+			'weights': args.weights,
+			'patience': args.patience,
+			'sampling_mode': args.sampling_mode,
+			'lambda_sup': args.lambda_sup,
+			'loss_fn': args.loss_fn,
+			'focal_gamma': args.focal_gamma,
+			'focal_alpha': args.focal_alpha,
+			'k_sup': args.k_sup,
+			'train_inference_dropout_enabled': args.train_inference_dropout_enabled,
+			'train_inference_transforms_enabled': args.train_inference_transforms_enabled
+		}
 		for i in range(max_seed):
 
-			pool.apply_async(utilsModel.runMultiGpuTraining, args=(i, models_parallel[i], args.python, outputPath, args.batch_size, args.dropoutRate, "5x", args.workers, args.epochs, args.checkpointModel))
+			pool.apply_async(utilsModel.runMultiGpuTraining, args=(i, models_parallel[i], args.python, outputPath) + tuple(training_params.values()))
 		pool.close()
 		pool.join()
 		print("\tAll " + str(args.ensemble) + " ensemble 5x models finished training.", flush=True)
@@ -237,8 +289,28 @@ def main ():
 	if args.train20x:
 		print("\tTraining " + str(args.ensemble) + " models at 20x resolution.", flush=True)
 		pool = multiprocessing.Pool(max_seed * max_process_per_gpu)
+		training_params = {
+			'batch_size': args.batch_size,
+			'dropoutRate': args.dropoutRate,
+			'resolution': "20x",
+			'workers': args.workers,
+			'epochs': args.epochs,
+			'checkpointModel': args.checkpointModel,
+			'validation_interval': args.validation_interval,
+			'k': args.k,
+			'weights': args.weights,
+			'patience': args.patience,
+			'sampling_mode': args.sampling_mode,
+			'lambda_sup': args.lambda_sup,
+			'loss_fn': args.loss_fn,
+			'focal_gamma': args.focal_gamma,
+			'focal_alpha': args.focal_alpha,
+			'k_sup': args.k_sup,
+			'train_inference_dropout_enabled': args.train_inference_dropout_enabled,
+			'train_inference_transforms_enabled': args.train_inference_transforms_enabled
+		}
 		for i in range(max_seed):
-			pool.apply_async(utilsModel.runMultiGpuTraining, args=(i, models_parallel[i], args.python, outputPath, args.batch_size, args.dropoutRate, "20x", args.workers, args.epochs, args.checkpointModel, args.disable_weighted_sampling))
+			pool.apply_async(utilsModel.runMultiGpuTraining, args=(i, models_parallel[i], args.python, outputPath) + tuple(training_params.values()))
 		pool.close()
 		pool.join()
 		print("\tAll " + str(args.ensemble) + " ensemble 20x models finished training.", flush=True)
