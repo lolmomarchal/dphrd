@@ -47,16 +47,24 @@ parser.add_argument('--dropoutRate', default=0.2, type=float,
 parser.add_argument('--weights', default=0.5, type=float, help='Unbalanced positive class weight (for CE loss).')
 parser.add_argument('--workers', default=16, type=int, help='Number of data loading workers.')
 parser.add_argument('--gpu', default=0, type=int, help='Gpu device selection.')
-parser.add_argument('--patience', default=20, type=int, help='Gpu device selection.')
+parser.add_argument('--patience', default=40, type=int, help='Gpu device selection.')
 
-# --- NEW ARGUMENTS ---
+parser.add_argument('--sampling_mode', type=str, default='dampened_combined',
+                    choices=['none',
+                             'dampened_subtype', 'balanced_subtype',
+                             'dampened_target', 'balanced_target',
+                             'dampened_combined', 'balanced_combined'],
+                    help='Strategy for pre-epoch slide sampling.')
+
+parser.add_argument('--lambda_sup', default=0.1, type=float, help='Weight for the supervised contrastive loss (lambda_reg).')
 parser.add_argument('--loss_fn', type=str, default='ce', choices=['ce', 'focal'],
                     help='Loss function to use (ce or focal).')
 parser.add_argument('--focal_gamma', type=float, default=2.0, help='Gamma parameter for Focal Loss.')
 parser.add_argument('--focal_alpha', type=float, default=None,
                     help='Alpha parameter (class weight) for Focal Loss. If None, uses --weights argument if not 0.5.')
-parser.add_argument('--disable_weighted_sampling', action='store_true', help='Disable weighted sampling by subtype during training.')
 
+# ================ LOSS ======================
+...
 # ================ LOSS ======================
 
 class SoftCrossEntropyLoss(nn.Module):
@@ -171,30 +179,16 @@ def inference(loader, model, criterion, enable_dropout_flag = False):
                     slide_outputs[sid_key] = {"probs": [], "target": t}
                 slide_outputs[sid_key]["probs"].append(p.item())
 
-    # --- Code that runs ONCE after the batch loop completes ---
     if total_samples == 0:
         mean_loss = 0.0
     else:
         mean_loss = running_loss / total_samples
-
-    # Slide Debug Writing
-    slide_path = os.path.join(args.output, "slide_debug_last_infer.tsv")
-    with open(slide_path, "w") as f:
-        print("slide_id\tn_tiles\tmean_prob\ttarget_label", file=f)
-        for sid, info in slide_outputs.items():
-            probs_arr = np.array(info["probs"])
-            mean_prob = np.mean(probs_arr)
-            target_label = info["target"].cpu().numpy().tolist()
-            n_tiles = len(probs_arr)
-            print(f"{sid}\t{n_tiles}\t{mean_prob:.4f}\t{target_label}", file=f)
-
     if not probs_list:
         all_probs = np.array([])
     else:
         all_probs = torch.cat(probs_list, dim=0).numpy()
 
-    # The return values here should match the expectation in main()
-    # Ensure they are correctly formatted for the groupTopKtiles call.
+    # probs for all tiles + the mean loss
     return all_probs, mean_loss
 
 
@@ -270,7 +264,6 @@ def train(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg
                 slide_outputs[sid_key] = {"probs": [], "target": t}
             slide_outputs[sid_key]["probs"].append(p.item())
 
-    # --- Code that runs ONCE after the batch loop completes ---
     if total_samples == 0:
         epoch_loss = 0.0
         epoch_inst_loss = 0.0
@@ -278,86 +271,11 @@ def train(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg
         epoch_loss = running_loss / total_samples
         epoch_inst_loss = running_inst_loss / total_samples
 
-    # Corrected DEBUG SECTION (Now outside the loop and writing correctly)
-    train_slide_path = os.path.join(args.output, f"train_slide_debug_epoch{run}.tsv")
-    with open(train_slide_path, "w", newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow(["slide_id", "n_tiles", "mean_prob", "target_label"])
-        for sid, info in slide_outputs.items():
-            probs_arr = np.array(info["probs"])
-            mean_prob = np.mean(probs_arr)
-            # .tolist() is safer for CSV writing
-            target_label = info["target"].cpu().numpy().tolist()
-            n_tiles = len(probs_arr)
-            writer.writerow([sid, n_tiles, f"{mean_prob:.4f}", target_label])
-
-    # --- MODIFIED FINAL PRINT STATEMENT ---
     print(
         f"[EPOCH {run}] Mean train loss: {epoch_loss:.6f} | "
         f"Mean Inst. Loss: {epoch_inst_loss:.6f}"
     )
-    # Return both losses, assuming your calling function handles them
     return epoch_loss, epoch_inst_loss
-
-def compute_inst_regulation(instance_probs, instance_features, slide_labels, slide_ids, k=10, device="cpu"):
-    """
-    Instance-level regularization (MSE) using 128D projected features.
-
-    Parameters:
-        instance_probs:     [tensor] 1D probabilities (for top-k selection).
-        instance_features:  [tensor] 128D features (for MSE calculation).
-        slide_labels:       [tensor] Soft/hard labels for the batch.
-        slide_ids:          [tensor] Slide IDs for the batch.
-    """
-
-    unique_slides = torch.unique(slide_ids)
-    slide_losses = []
-    slide_count = 0
-
-    for slide_id in unique_slides:
-        mask = (slide_ids == slide_id)
-        n = mask.sum().item()
-        if n == 0:
-            continue
-
-        slide_probs = instance_probs[mask]
-        slide_feature_vectors = instance_features[mask]  # <-- Get 128D features
-        slide_label = slide_labels[mask][0]  # Soft label for the slide
-
-        # Determine the hard label score (0 or 1)
-        if slide_label.numel() == 2:
-            hrd_score = slide_label[1].item()  # Assuming class 1 is the positive class
-        else:
-            hrd_score = slide_label.item()
-
-        # Apply loss only to slides with HARD labels (0.0 or 1.0)
-        if hrd_score == 0.0 or hrd_score == 1.0:
-            # 1. Use PROBABILITIES to find the top-k tiles (Selection)
-            k_eff = min(k, slide_probs.numel())
-            topk_idx = torch.topk(slide_probs, k=k_eff, dim=0)[1]
-
-            # 2. Select the corresponding 128D FEATURES for loss calculation
-            topk_features = slide_feature_vectors[topk_idx]  # Shape: (k_eff, 128)
-
-            # 3. Create the 128D Pseudo-Target Vector
-            # Target is a tensor of shape (k_eff, 128) where every element is hrd_score
-            pseudo_target_vector = torch.full_like(topk_features, fill_value=hrd_score)
-
-            # 4. Compute Loss (MSE on 128D vectors)
-            # F.mse_loss averages over all elements (k_eff * 128)
-            slide_loss = F.mse_loss(topk_features, pseudo_target_vector, reduction='mean')
-
-            slide_losses.append(slide_loss)
-            slide_count += 1
-
-    if slide_count == 0:
-        # Return a zero tensor that still requires a gradient for stability
-        return torch.tensor(0.0, device=device, requires_grad=True)
-
-    # Compute the mean loss across all eligible slides
-    total_loss = torch.mean(torch.stack(slide_losses))
-
-    return total_loss
 
 
 # ================= TRAIN LOOP ==================
@@ -365,7 +283,7 @@ best_val_loss = np.inf
 
 def main():
     # 1. Initiate params + output
-    # torch.set_num_threads(1)
+    torch.set_num_threads(1)
     global best_val_loss, device, args
     args = parser.parse_args()
     resolution = args.resolution
@@ -433,7 +351,7 @@ def main():
 
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-    cudnn.benchmark = True
+    cudnn.benchmark = False
 
     # 5. Transforms
     normalize = transforms.Normalize(mean=[0.485, 0.406, 0.406], std=[0.229, 0.224, 0.225])
@@ -447,10 +365,8 @@ def main():
         normalize
     ])
 
-
-
     # 6. Dataset start
-    train_dset = ut.MILdataset(args.train_lib, trans, disable_weighted_sampling=args.disable_weighted_sampling)
+    train_dset = ut.MILdataset(args.train_lib, trans)
     if device == "cpu":
         pin_memory = False
     else:
@@ -477,6 +393,7 @@ def main():
             print(f"[INFO]: STOPPED AT EPOCH {epoch + 1} AFTER {args.patience} EPOCHS OF NO IMPROVEMENT")
             break
         # i. start with overall inference
+        train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode) # to select trained slides
         train_dset.modelState(1)
         train_dset.setTransforms(infer_trans)
         infer_loader = torch.utils.data.DataLoader(
@@ -507,7 +424,7 @@ def main():
 
         train_loss, train_inst_loss = train(epoch + 1, train_loader_new, model,
                                             criterion, criterion_supcon, optimizer, # <-- Pass new criterion
-                                            lambda_reg=0.,
+                                            lambda_reg=args.lambda_sup,
                                             device=device)
         log_data = {
             'epoch': epoch + 1,

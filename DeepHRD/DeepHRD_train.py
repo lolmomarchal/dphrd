@@ -182,7 +182,8 @@ def main ():
 		print("\tTraining " + str(args.ensemble) + " models at 5x resolution. You can check progress of each model at " + os.path.join(outputPath, "training_m[model_number]"), flush=True)
 		pool = multiprocessing.Pool(max_seed * max_process_per_gpu)
 		for i in range(max_seed):
-			pool.apply_async(utilsModel.runMultiGpuTraining, args=(i, models_parallel[i], args.python, outputPath, args.batch_size, args.dropoutRate, "5x", args.workers, args.epochs, args.checkpointModel,args.disable_weighted_sampling))
+
+			pool.apply_async(utilsModel.runMultiGpuTraining, args=(i, models_parallel[i], args.python, outputPath, args.batch_size, args.dropoutRate, "5x", args.workers, args.epochs, args.checkpointModel))
 		pool.close()
 		pool.join()
 		print("\tAll " + str(args.ensemble) + " ensemble 5x models finished training.", flush=True)

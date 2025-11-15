@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
- 
+
 #Author: Erik N. Bergstrom
 
 #Contact: ebergstr@eng.ucsd.edu
@@ -16,23 +16,13 @@ from scipy.stats import norm
 import random
 import time
 import sys
+from collections import defaultdict, Counter # Import Counter
+import torch.utils.data as data
+import torch
+import numpy as np
+from PIL import Image #
 
-def safe_open(path):
-    try:
-        img = Image.open(path)
-        img = img.convert("RGB")  # strip ICC profile
-        return img
-    except ValueError as e:
-        if "Decompressed Data Too Large" in str(e):
-            print(f"[WARNING] Skipping corrupted ICC profile in {path}")
-            img = Image.open(path, formats=["PNG"])
-            img.info.pop("icc_profile", None)
-            img = img.convert("RGB")
-            return img
-        raise
-
-
-def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, dropoutRate, resolution, workers, epochs, checkpointModel=None,disable_weighted_sampling=False):
+def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, dropoutRate, resolution, workers, epochs, checkpointModel=None):
 	for currentModel in iModels:
 		if resolution == "5x":
 			testCommand = pythonVersion + " base/train_mp.py --train_lib " + os.path.join(outputPath, "trainData.pt") + " --val_lib " + os.path.join(outputPath, "valData.pt") +  " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) +  " --batch_size " + str(batch_size) + " --gpu " + str(i) + " --dropoutRate " + str(dropoutRate) + " --resolution " + resolution + " --workers " + str(workers) + " --epochs " + str(epochs)
@@ -41,12 +31,14 @@ def runMultiGpuTraining (i, iModels, pythonVersion, outputPath, batch_size, drop
 		else:
 			print("Resolution " + resolution + " is not currently supported.")
 			sys.exit()
-		# time.sleep(random.randrange(0, 4))
 		if checkpointModel:
 			testCommand += " --model " + checkpointModel
-		if disable_weighted_sampling:
-			testCommand += " --disable_weighted_sampling"
-		os.system(testCommand)
+
+		try:
+			print(testCommand)
+			os.system(testCommand)
+		except Exception as e:
+			print(e)
 		torch.cuda.empty_cache()
 
 
@@ -60,11 +52,11 @@ def runMultiGpuInference (i, iModels, pythonVersion, outputPath, modelPath, batc
 			# Non-dropout inference for extracting features of each tile.
 			testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "testData.pt") + " --output " + os.path.join(outputPath, "m" + str(currentModel+1)) + " --model " + os.path.join(modelPath,resolution + "_m" + str(currentModel+1) + ".pth") +  " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution + " --workers " + str(workers)
 			testCommand2 = "mv " + os.path.join(outputPath, "m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "m" + str(currentModel+1), "feature_vectors_test_" + resolution + ".tsv")
-			
+
 			# time.sleep(random.randrange(0, 4))
 			os.system(testCommand)
 			os.system(testCommand2)
-			
+
 
 
 			# Additional inference for all BN-reps with the specified dropout rate (default 0.2).
@@ -73,7 +65,7 @@ def runMultiGpuInference (i, iModels, pythonVersion, outputPath, modelPath, batc
 				testCommand3 = "mv " + os.path.join(outputPath, "m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "m" + str(currentModel+1), "predictions_" + resolution + ".csv")
 				os.system(testCommand)
 				os.system(testCommand3)
-				torch.cuda.empty_cache()	
+				torch.cuda.empty_cache()
 
 		else:
 			# Non-dropout inference for extracting features of each tile.
@@ -86,12 +78,12 @@ def runMultiGpuInference (i, iModels, pythonVersion, outputPath, modelPath, batc
 
 			# Additional inference for all BN-reps with the specified dropout rate (default 0.2).
 			if dropoutRate > 0:
-				testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "m" + str(i+1), "ROI", "testData20x.pt")+ " --output " + os.path.join(outputPath, "m" + str(currentModel+1)) + " --model " + os.path.join(modelPath,resolution + "_m" + str(i+1) + ".pth") + " --batch_size " + str(batch_size) + " --BN_reps " + str(BN_reps) + " --gpu " + str(i) + " --dropoutRate " + str(dropoutRate) + " --resolution " + resolution + " --workers " + str(workers) 		
+				testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "m" + str(i+1), "ROI", "testData20x.pt")+ " --output " + os.path.join(outputPath, "m" + str(currentModel+1)) + " --model " + os.path.join(modelPath,resolution + "_m" + str(i+1) + ".pth") + " --batch_size " + str(batch_size) + " --BN_reps " + str(BN_reps) + " --gpu " + str(i) + " --dropoutRate " + str(dropoutRate) + " --resolution " + resolution + " --workers " + str(workers)
 				testCommand3 = "mv " + os.path.join(outputPath, "m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "m" + str(currentModel+1), "predictions_" + resolution + ".csv")
 				os.system(testCommand)
 				os.system(testCommand3)
-				torch.cuda.empty_cache()	
-		
+				torch.cuda.empty_cache()
+
 
 
 def generateFeatureVectorsUsingBestModels (i, iModels, project, projectPath, pythonVersion, outputPath, batch_size, dropoutRate, resolution, bestModels, checkpointModel=None):
@@ -126,7 +118,7 @@ def generateFeatureVectorsUsingBestModels (i, iModels, project, projectPath, pyt
 		testCommand3 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_test.tsv")
 		os.system(testCommand)
 		os.system(testCommand2)
-		os.system(testCommand3)	
+		os.system(testCommand3)
 
 		torch.cuda.empty_cache()
 
@@ -135,25 +127,25 @@ def generateFeatureVectorsUsingBestModels (i, iModels, project, projectPath, pyt
 def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath, maxROI, max_cpu, stain_norm, removeBlurry, predict=False):
 	for currentModel in iModels:
 		if predict:
-	
+
 			roiCommand = pythonVersion + " base/pullROIs.py --project " + project + " --projectPath " + outputPath + " --output " +  os.path.join(outputPath, "m" + str(currentModel+1), "ROI") + " --objectiveFile " + \
-                                            os.path.join(projectPath, "objectiveInfo.txt") + " --slidePath " + os.path.join(projectPath, project) + " --tileConv " + \
-                                            os.path.join(projectPath, "slideNumberToSampleName.txt") + " --test_lib " + os.path.join(outputPath, "testData.pt") + " --feature_vectors_test " + os.path.join(outputPath, "m" + str(currentModel+1), "feature_vectors_test_5x.tsv") + \
-                                            " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu) + " --predict"
+						 os.path.join(projectPath, "objectiveInfo.txt") + " --slidePath " + os.path.join(projectPath, project) + " --tileConv " + \
+						 os.path.join(projectPath, "slideNumberToSampleName.txt") + " --test_lib " + os.path.join(outputPath, "testData.pt") + " --feature_vectors_test " + os.path.join(outputPath, "m" + str(currentModel+1), "feature_vectors_test_5x.tsv") + \
+						 " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu) + " --predict"
 
 
 		else:
-			    roiCommand = pythonVersion + " base/pullROIs.py --project " + project + " --projectPath " + outputPath + " --output " +  os.path.join(outputPath, "training_20x_m" + str(currentModel+1)) + " --objectiveFile " + \
-                            os.path.join(projectPath, "objectiveInfo.txt") + " --slidePath " + os.path.join(projectPath, project) + " --tileConv " + \
-                            os.path.join(projectPath, "slideNumberToSampleName.txt") + " --test_lib " + os.path.join(outputPath, "testData.pt") + " --feature_vectors_test " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_test.tsv") + \
-                            " --train_lib " + os.path.join(outputPath, "trainData.pt") + " --feature_vectors_train " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_train.tsv") + \
-                            " --val_lib " + os.path.join(outputPath, "valData.pt") + " --feature_vectors_val " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv") + \
-                            " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu)
+			roiCommand = pythonVersion + " base/pullROIs.py --project " + project + " --projectPath " + outputPath + " --output " +  os.path.join(outputPath, "training_20x_m" + str(currentModel+1)) + " --objectiveFile " + \
+						 os.path.join(projectPath, "objectiveInfo.txt") + " --slidePath " + os.path.join(projectPath, project) + " --tileConv " + \
+						 os.path.join(projectPath, "slideNumberToSampleName.txt") + " --test_lib " + os.path.join(outputPath, "testData.pt") + " --feature_vectors_test " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_test.tsv") + \
+						 " --train_lib " + os.path.join(outputPath, "trainData.pt") + " --feature_vectors_train " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_train.tsv") + \
+						 " --val_lib " + os.path.join(outputPath, "valData.pt") + " --feature_vectors_val " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv") + \
+						 " --maxROI " + str(maxROI) + " --max_cpu " + str(max_cpu)
 		if removeBlurry:
-			 roiCommand +=" --removeBlurry"
+			roiCommand +=" --removeBlurry"
 		if stain_norm:
-			 roiCommand +=" --stain_norm"
-			
+			roiCommand +=" --stain_norm"
+
 
 		os.system(roiCommand)
 		torch.cuda.empty_cache()
@@ -207,7 +199,7 @@ def multiResolution (outputPath, nModels, dropoutRate, threshold):
 	mat5x = pd.read_csv(os.path.join(outputPath, "predictions_5x_n" + str(nModels) + "_models_" + str(dropoutRate) + ".csv"), index_col=0, header=0)
 	mat20x = pd.read_csv(os.path.join(outputPath, "predictions_20x_n" + str(nModels) + "_models_" + str(dropoutRate) + ".csv"), index_col=0, header=0)
 	# samples = list(set(mat5x.index & mat20x.index))
-	samples = list(set.intersection(set(mat5x.index), set(mat20x.index)))
+	samples = list(set.intersection(set(mat5a.index), set(mat20x.index)))
 	mat5x = mat5x.loc[samples]
 	mat20x = mat20x.loc[samples]
 
@@ -252,7 +244,7 @@ def combinePredictions (resolution, outputPath, nModels, dropoutRate):
 		finalPredictions["m" + str(i+1) + "-LowerCI"] = newPredictions.loc[:,newPredictions.columns.str.startswith("BN_rep")].quantile(0.025, axis=1)
 		finalPredictions["m" + str(i+1) + "-UpperCI"] = newPredictions.loc[:,newPredictions.columns.str.startswith("BN_rep")].quantile(0.975, axis=1)
 
-		
+
 	finalPredictions['Ensemble-Probability'] = finalPredictions['Ensemble-Probability']/nModels
 	finalPredictions['Ensemble-LowerCI'] = finalPredictions.loc[:,finalPredictions.columns.str.startswith("BN_rep")].quantile(0.025, axis=1)
 	finalPredictions['Ensemble-UpperCI'] = finalPredictions.loc[:,finalPredictions.columns.str.startswith("BN_rep")].quantile(0.975, axis=1)
@@ -270,8 +262,8 @@ def groupTopKtilesTesting (groups, data,k):
 	Parameters:
 		groups:		[list]	The tissue slide indeces for each corresponding tile.
 		data:		[list]	The probabilites after running an inference pass over the dataset
-		k:			[int]	The number of top k tiles to consider for each slide. The default is 1; using 
-							only the maximum predicted tile probabilite as the final probability for the entire 
+		k:			[int]	The number of top k tiles to consider for each slide. The default is 1; using
+							only the maximum predicted tile probabilite as the final probability for the entire
 							tissue slide (standard MIL assumption).
 
 	Returns:
@@ -281,11 +273,11 @@ def groupTopKtilesTesting (groups, data,k):
 		3. The probabilities each corresponding top tile
 
 	'''
-# 	print("\n--- INSIDE groupTopKtilesProbabilities ---")
-# 	print(f"Length of 'groups' received: {len(groups)}")
-# 	print(f"Length of 'data' (probs) received: {len(data)}")
-# 	print(f"Value of 'nmax' (number of slides) received: {nmax}")
-# 	print("------------------------------------------\n")
+	# 	print("\n--- INSIDE groupTopKtilesProbabilities ---")
+	# 	print(f"Length of 'groups' received: {len(groups)}")
+	# 	print(f"Length of 'data' (probs) received: {len(data)}")
+	# 	print(f"Value of 'nmax' (number of slides) received: {nmax}")
+	# 	print("------------------------------------------\n")
 	order = np.lexsort((data, groups))
 	groups = groups[order]
 	data = data[order]
@@ -299,13 +291,13 @@ def groupTopKtiles (groups, data,k=1):
 	'''
 	Function edited from (https://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
 
-	Groups the top k tiles from each slide. 
+	Groups the top k tiles from each slide.
 
 	Parameters:
 		groups:		[list]	The tissue slide indeces for each corresponding tile.
 		data:		[list]	The probabilites after running an inference pass over the dataset
-		k:			[int]	The number of top k tiles to consider for each slide. The default is 1; using 
-							only the maximum predicted tile probabilite as the final probability for the entire 
+		k:			[int]	The number of top k tiles to consider for each slide. The default is 1; using
+							only the maximum predicted tile probabilite as the final probability for the entire
 							tissue slide (standard MIL assumption).
 
 	Returns:
@@ -323,7 +315,7 @@ def groupTopKtiles (groups, data,k=1):
 
 def groupTopKtilesProbabilities (groups, data, nmax):
 	'''
-	Function edited from (https://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
+	Function edited from (https_://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
 
 	Groups the top k tiles from each slide.
 
@@ -333,7 +325,7 @@ def groupTopKtilesProbabilities (groups, data, nmax):
 		nmax:		[int]	The number of tissue slides in the given dataset
 
 	Returns:
-		The maximum tile probabilities for each slide. 
+		The maximum tile probabilities for each slide.
 
 	'''
 	out = np.empty(nmax)
@@ -382,17 +374,7 @@ def calculateError (pred,real):
 	return (accuracy, fpr, fnr)
 
 
-from collections import defaultdict
-import random
-
-import torch.utils.data as data
-import torch
-import numpy as np
-import random
-from collections import defaultdict
-from PIL import Image #
-
-def safe_open(path):
+def safe_open(path): #
 		return Image.open(path)
 class MILdataset(data.Dataset):
 	'''
@@ -400,17 +382,16 @@ class MILdataset(data.Dataset):
     Instantiates a MIL dataset.
     '''
 
-	def __init__(self, libraryfile, transform=None,disable_weighted_sampling = False):
+	def __init__(self, libraryfile, transform=None):
 		'''
         Initializes all class atributes.
-        *** This is your original __init__ logic, which is CORRECT for your data. ***
+        *** This is your original __init__ logic, which is what your .pt file has. ***
         '''
 		lib = torch.load(libraryfile, map_location='cpu')
 
 		grid = []
 		slideIDX = []
 
-		# This checks if 'tiles' key exists, which is what your .pt file has
 		if 'tiles' not in lib:
 			print(f"[FATAL ERROR in MILdataset] Your .pt file '{libraryfile}' is missing the required 'tiles' key.")
 			self.grid = []
@@ -430,107 +411,152 @@ class MILdataset(data.Dataset):
 			self.grid = grid
 			self.slideIDX = slideIDX
 			print(f"[INFO MILdataset] Loaded {len(self.grid)} total tiles from {len(self.slidenames)} slides.")
-		self.disable_weighted_sampling = disable_weighted_sampling
+
 		self.transform = transform
 		self.mode = 1
 		self.t_data = []
 
+		self.epoch_tile_info = None
+		self.epoch_slide_id_map = None
+		self.epoch_target_map = None
+		self.epoch_subtype_map = None
+
+
 	def modelState(self, mode):
 		'''Changes the current mode either to inference or training'''
 		self.mode = mode
+		if mode == 2:
+			self.epoch_tile_info = None
 	def setTransforms(self, transforms):
 		self.transform = transforms
-	def maket_data(self,all_tile_probs,k):
-		slide_to_all_tiles = defaultdict(list)
-		if len(self.grid) != len(all_tile_probs):
-			print(f"[ERROR] maket_data: Mismatch! Have {len(self.grid)} tiles but {len(all_tile_probs)} probs. Aborting.")
-			self.t_data = []
-			return
+
+	def preselect_epoch_slides(self, sampling_mode='dampened_combined'):
+		unique_original_slide_ids = list(range(len(self.slidenames)))
+		num_slides_to_sample = len(unique_original_slide_ids)
+
+		shuffled_original_slide_ids = []
+		weights = None
+		counts_to_log = None
+
+		try:
+
+
+			if 'subtype' in sampling_mode:
+				all_subtypes = self.subtype
+				subtype_counts = Counter(all_subtypes)
+				counts_to_log = subtype_counts
+				if sampling_mode == 'dampened_subtype':
+					weights = [(1.0 / subtype_counts[s])**0.5 for s in all_subtypes]
+				elif sampling_mode == 'balanced_subtype':
+					weights = [1.0 / subtype_counts[s] for s in all_subtypes]
+
+			elif 'target' in sampling_mode:
+				all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.targets]
+				target_counts = Counter(all_targets_hard)
+				counts_to_log = target_counts
+				if sampling_mode == 'dampened_target':
+					weights = [(1.0 / target_counts[t])**0.5 for t in all_targets_hard]
+				elif sampling_mode == 'balanced_target':
+					weights = [1.0 / target_counts[t] for t in all_targets_hard]
+
+			elif 'combined' in sampling_mode:
+				all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.targets]
+				all_subtypes = self.subtype
+				all_combined_keys = [f"{s}_{t}" for s, t in zip(all_subtypes, all_targets_hard)]
+				combined_counts = Counter(all_combined_keys)
+				counts_to_log = combined_counts
+				if sampling_mode == 'dampened_combined':
+					weights = [(1.0 / combined_counts[key])**0.5 for key in all_combined_keys]
+				elif sampling_mode == 'balanced_combined':
+					weights = [1.0 / combined_counts[key] for key in all_combined_keys]
+
+			shuffled_original_slide_ids = random.choices(
+				population=unique_original_slide_ids,
+				weights=weights, #
+				k=num_slides_to_sample
+			)
+
+			if counts_to_log:
+				print(f"[INFO] Sampling from base counts: {counts_to_log}")
+
+			sampled_subtypes = [self.subtype[i] for i in shuffled_original_slide_ids]
+			print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
+			sampled_targets = [1 if self.targets[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
+			print(f"[INFO] Post-sampling target distribution: {Counter(sampled_targets)}")
+
+
+		except Exception as e:
+			print(f"[ERROR] preselect_epoch_slides: Error during weighting: {e}. Falling back to uniform sampling.")
+			shuffled_original_slide_ids = random.choices(
+				population=unique_original_slide_ids,
+				k=num_slides_to_sample
+			)
+
+		selected_slide_set = set(shuffled_original_slide_ids)
+		print(f"[INFO] Pre-selection resulted in {len(selected_slide_set)} unique slides for this epoch's inference.")
+
+		self.epoch_tile_info = []
+		self.epoch_slide_id_map = {}
+		self.epoch_target_map = {}
+		self.epoch_subtype_map = {}
+		new_slide_idx_counter = 0
 
 		for i in range(len(self.grid)):
-			slide_id = self.slideIDX[i]
+			original_slide_id = self.slideIDX[i]
+
+			if original_slide_id in selected_slide_set:
+				if original_slide_id not in self.epoch_slide_id_map:
+					new_id = new_slide_idx_counter
+					self.epoch_slide_id_map[original_slide_id] = new_id
+					self.epoch_target_map[new_id] = self.targets[original_slide_id]
+					self.epoch_subtype_map[new_id] = self.subtype[original_slide_id]
+					new_slide_idx_counter += 1
+
+				new_epoch_slide_id = self.epoch_slide_id_map[original_slide_id]
+				self.epoch_tile_info.append((i, new_epoch_slide_id))
+
+		print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
+	def maket_data(self, all_tile_probs, k):
+		slide_to_all_tiles = defaultdict(list)
+		if len(self.epoch_tile_info) != len(all_tile_probs):
+			print(f"[ERROR] maket_data: Mismatch! Have {len(self.epoch_tile_info)} tiles in epoch info but {len(all_tile_probs)} probs. Aborting.")
+			self.t_data = []
+			return
+		for i in range(len(all_tile_probs)):
+			original_grid_index, new_epoch_slide_id = self.epoch_tile_info[i]
+
+			slide_id = new_epoch_slide_id # Use the new ID
+
 			tile_data = (
-				self.grid[i],             # 0: tile_path
-				self.targets[slide_id],   # 1: target
-				all_tile_probs[i],         # 2: prob
-				self.subtype[slide_id]    # 3: subtype
+				self.grid[original_grid_index],   # 0: tile_path
+				self.epoch_target_map[slide_id],  # 1: target
+				all_tile_probs[i],                # 2: prob
+				self.epoch_subtype_map[slide_id]  # 3: subtype
 			)
 			slide_to_all_tiles[slide_id].append(tile_data)
 
 		unique_slide_ids = list(slide_to_all_tiles.keys())
-
-		if not unique_slide_ids:
-			print("[ERROR] maket_data: No slide IDs found. t_data will be empty.")
-			self.t_data = []
-			return
-
-		# 3. Perform weighted slide sampling (same logic as before)
-		if not self.disable_weighted_sampling:
-			try:
-				slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
-				from collections import Counter
-				subtype_counts = Counter(slide_subtypes)
-				subtype_weights = {
-					subtype: 1.0 / count for subtype, count in subtype_counts.items()
-				}
-				slide_weights = [subtype_weights[subtype] for subtype in slide_subtypes]
-
-				# This samples *with replacement*, so a rare slide can appear multiple times
-				shuffled_slide_ids = random.choices(
-					population=unique_slide_ids,
-					weights=slide_weights,
-					k=len(unique_slide_ids) # Sample N times, where N=num_slides
-				)
-				print(f"[INFO] maket_data: Sampled {len(shuffled_slide_ids)} slides (with replacement) based on subtype counts: {subtype_counts}")
-
-			except Exception as e:
-				print(f"[ERROR] maket_data: Error during weighting: {e}. Falling back to random.shuffle.")
-				shuffled_slide_ids = unique_slide_ids
-				random.shuffle(shuffled_slide_ids)
-		else:
-			print(f"[INFO] maketraindata: Shuffling {len(unique_slide_ids)} slides (NO weighting).")
-			shuffled_slide_ids = unique_slide_ids
-			random.shuffle(shuffled_slide_ids)
-
-			# 4. Build the new t_data by dynamically sampling tiles
-		self.t_data = []
+		shuffled_slide_ids = unique_slide_ids
+		random.shuffle(shuffled_slide_ids)
+		self.t_data =[]
 		for slide_id in shuffled_slide_ids:
-
-				all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
-				sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
-
-
-				candidate_pool_size = min(len(sorted_tiles), max(k * 3, 100))
-				candidate_pool = sorted_tiles[:candidate_pool_size]
-				pool_probs = torch.tensor([t[2] for t in candidate_pool], dtype=torch.float32) + 1e-6
-				num_to_sample = min(k, len(candidate_pool))
-				if num_to_sample == 0:
-					continue
-				try:
-					sampled_indices = torch.multinomial(pool_probs, num_samples=num_to_sample, replacement=False)
-				except RuntimeError as e:
-					print(f"[WARN] torch.multinomial failed for slide {slide_id}: {e}. Skipping slide.")
-					continue
-				for idx in sampled_indices:
-					tile_to_add = candidate_pool[idx]
-
-					final_tile_data = (
-						slide_id,       # slide_id
+			all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
+			sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
+			num_to_sample = min(k, len(sorted_tiles))
+			if num_to_sample ==0:
+				continue
+			top_k_tiles = sorted_tiles[:num_to_sample]
+			for tile_to_add in top_k_tiles:
+				self.t_data.append(
+					(
+						slide_id,       # slide_id (this is the new epoch ID)
 						tile_to_add[0], # tile_path
 						tile_to_add[1]  # target
 					)
-					self.t_data.append(final_tile_data)
 
-		print(f"[INFO] maket_data: Created new training set with {len(self.t_data)} dynamically sampled tiles.")
+				)
 
 	def maketraindata(self, idxs):
-		'''
-        Generates the training dataset by performing WEIGHTED SAMPLING of slides
-        (based on subtype) and then flattening the tile list.
-        'idxs' are the Top-K tile indices *for this epoch*.
-        '''
-
-		# 1. Group all top-k tile data by their slideID
 		slide_to_tiles = defaultdict(list)
 		for x in idxs:
 			if x >= len(self.slideIDX):
@@ -549,76 +575,78 @@ class MILdataset(data.Dataset):
 			return
 
 		try:
-				# 3. Get the subtype for *only these available slides*
-				slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
+			# 3. Get the subtype for *only these available slides*
+			slide_subtypes = [self.subtype[slide_id] for slide_id in unique_slide_ids]
 
-				# 4. Calculate weights based *only* on the counts from this epoch
-				from collections import Counter
-				subtype_counts = Counter(slide_subtypes)
+			# 4. Calculate weights based *only* on the counts from this epoch
+			from collections import Counter
+			subtype_counts = Counter(slide_subtypes)
 
-				subtype_weights = {
-					subtype: 1.0 / count
-					for subtype, count in subtype_counts.items()
-				}
+			subtype_weights = {
+				subtype: 1.0 / count
+				for subtype, count in subtype_counts.items()
+			}
 
-				# 5. Create a list of weights *in the same order* as unique_slide_ids
-				slide_weights = [subtype_weights[subtype] for subtype in slide_subtypes]
+			# 5. Create a list of weights *in the same order* as unique_slide_ids
+			slide_weights = [subtype_weights[subtype] for subtype in slide_subtypes]
 
-				# 6. Perform a weighted shuffle
-				shuffled_slide_ids = random.choices(
-					population=unique_slide_ids,
-					weights=slide_weights,
-					k=len(unique_slide_ids)
-				)
-				# This print statement will prove it's working (e.g., counts will change each epoch)
-				print(f"[INFO] maketraindata: Calculated epoch-specific subtype counts: {subtype_counts}")
+			# 6. Perform a weighted shuffle
+			shuffled_slide_ids = random.choices(
+				population=unique_slide_ids,
+				weights=slide_weights,
+				k=len(unique_slide_ids)
+			)
 
 		except Exception as e:
-				print(f"[ERROR] maketraindata: Error during weighting: {e}. Falling back to random.shuffle.")
-				shuffled_slide_ids = unique_slide_ids
-				random.shuffle(shuffled_slide_ids)
+			shuffled_slide_ids = unique_slide_ids
+			random.shuffle(shuffled_slide_ids)
 
-			# 7. Build the new t_data (still bag-contiguous)
 		self.t_data = []
 		for slide_id in shuffled_slide_ids:
-				self.t_data.extend(slide_to_tiles[slide_id])
+			self.t_data.extend(slide_to_tiles[slide_id])
 
-		print(f"[INFO] maketraindata: Created new weighted training set with {len(self.t_data)} tiles from {len(unique_slide_ids)} unique slides.")
 		sampled_subtypes = [self.subtype[sid] for sid in shuffled_slide_ids]
-		from collections import Counter
-		print(f"[DEBUG] Sampled subtype distribution this epoch: {Counter(sampled_subtypes)}")
+
 	def __getitem__(self, index):
-			'''
-			Accesses a tile based upon the preset mode (inference or training)
-			'''
-			if self.mode == 1:
-				slideIDX = self.slideIDX[index]
-				target = self.targets[slideIDX] # Gets the tensor for this slide
-				tile_path = self.grid[index]
-				img = safe_open(tile_path) # Use the safe_open function
-
-			# Mode 2: Training - use the subset t_data
-			elif self.mode == 2:
-				slideIDX, tile_path, target = self.t_data[index] # target is already the tensor
-				img = safe_open(tile_path) # Use the safe_open function
-
+		'''
+        Accesses a tile based upon the preset mode (inference or training)
+        '''
+		if self.mode == 1:
+			# If we are in a pre-selected epoch, use the epoch data
+			if self.epoch_tile_info is not None:
+				original_grid_index, new_epoch_slide_id = self.epoch_tile_info[index]
+				slideIDX = new_epoch_slide_id
+				target = self.epoch_target_map[new_epoch_slide_id]
+				tile_path = self.grid[original_grid_index]
 			else:
-				# Handle case where mode is not set
-				raise IndexError(f"Dataset mode not set to 1 or 2. Current mode: {self.mode}")
+				slideIDX = self.slideIDX[index]
+				target = self.targets[slideIDX]
+				tile_path = self.grid[index]
 
-			# Apply transformations
-			if self.transform is not None:
-				img = self.transform(img)
+			img = safe_open(tile_path)
 
-			# target is already a tensor, so it's ready for the model
-			return (img, target, slideIDX)
+		elif self.mode == 2:
+			slideIDX, tile_path, target = self.t_data[index] # target is already the tensor
+			img = safe_open(tile_path)
+
+		else:
+			raise IndexError(f"Dataset mode not set to 1 or 2. Current mode: {self.mode}")
+
+		if self.transform is not None:
+			img = self.transform(img)
+
+		return (img, target, slideIDX)
+
 	def __len__(self):
 		'''
         Returns the length of the given dataset, whether it's the training or inference sets
         '''
 		if self.mode == 1:
-			return len(self.grid)
+			if self.epoch_tile_info is not None:
+				return len(self.epoch_tile_info)
+			else:
+				return len(self.grid)
 		elif self.mode == 2:
 			return len(self.t_data)
 		else:
-			return 0 # Return 0 if mode is not set
+			return 0
