@@ -56,15 +56,15 @@ parser.add_argument('--sampling_mode', type=str, default='dampened_combined',
                              'dampened_combined', 'balanced_combined'],
                     help='Strategy for pre-epoch slide sampling.')
 
-parser.add_argument('--lambda_sup', default=0.1, type=float, help='Weight for the supervised contrastive loss (lambda_reg).')
+parser.add_argument('--lambda_sup', default=0.3, type=float, help='Weight for the supervised contrastive loss (lambda_reg).')
 parser.add_argument('--loss_fn', type=str, default='ce', choices=['ce', 'focal'],
                     help='Loss function to use (ce or focal).')
 parser.add_argument('--focal_gamma', type=float, default=2.0, help='Gamma parameter for Focal Loss.')
 parser.add_argument('--focal_alpha', type=float, default=None,
                     help='Alpha parameter (class weight) for Focal Loss. If None, uses --weights argument if not 0.5.')
+parser.add_argument('--k_sup', default=10, type=int,
+                    help='The top k tiles per slide used specifically for the supervised contrastive loss.')
 
-# ================ LOSS ======================
-...
 # ================ LOSS ======================
 
 class SoftCrossEntropyLoss(nn.Module):
@@ -192,7 +192,7 @@ def inference(loader, model, criterion, enable_dropout_flag = False):
     return all_probs, mean_loss
 
 
-def train(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg=0.2, device="cpu"):
+def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimizer, lambda_reg=0.2, device="cpu"):
     """
     Updated train function with Supervised Contrastive Loss (SupCon)
     that only runs on tiles with "definitive" hard labels (e.g., [0, 1] or [1, 0]).
@@ -206,7 +206,7 @@ def train(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg
         return 0.0, 0.0
 
     slide_outputs = {}
-
+    supcon_iter = iter(supcon_loader)
     for i, (input, target, slide_ids) in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[TRAINING]"):
         input = input.to(device, non_blocking= True )
         target = target.to(device, non_blocking= True )  # Target shape is (B, 2), e.g., [[0.0, 1.0], [0.3, 0.7]]
@@ -214,32 +214,37 @@ def train(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg
         batch_size = input.size(0)
         total_samples += batch_size
 
-        # 1. Forward Pass
-        # projected_features shape is (B, 128)
+        # 1. Forward Pass & main classification loss w/ k =1
         logits, _, projected_features = model(input)
-
-        # 2. Main Classification Loss (runs on ALL tiles)
-        # This loss handles soft labels (e.g., [0.3, 0.7]) correctly.
         loss_cls = criterion(logits, target)
 
-        # 3. Supervised Contrastive Loss (runs ONLY on "definitive" tiles)
-
-        definitive_mask = (target[:, 0] == 0.0) | (target[:, 0] == 1.0)
-
-        # Get the hard labels (0 or 1) for all tiles in the batch
-        # Shape: (B,)
-        hard_labels = torch.argmax(target, dim=1)
-
-        # Filter: select only the features and labels that correspond
-        # to our "definitive" tiles.
-        features_for_supcon = projected_features[definitive_mask]
-        labels_for_supcon = hard_labels[definitive_mask]
 
         inst_loss = torch.tensor(0.0, device=device)
-        # SupCon loss requires at least 2 samples to compare.
-        if labels_for_supcon.shape[0] > 1:
-            inst_loss = criterion_supcon(features_for_supcon, labels_for_supcon)
-        # --- END OF NEW LOGIC ---
+        input_sup, target_sup = None, None
+        if lambda_reg != 0:
+            # do supervise contrast loss on k_sup tiles and only for super sure
+            try:
+                input_sup, target_sup, _ = next(supcon_iter)
+            except StopIteration:
+                supcon_iter = iter(supcon_loader)
+                input_sup, target_sup, _ = next(supcon_iter)
+            except RuntimeError as e:
+                if "expected more than 0 tensors" in str(e):
+                    print("[WARNING] SupCon loader is empty for this step. Skipping SupCon Loss.")
+                else:
+                    raise e
+            if input_sup is not None:
+                input_sup = input_sup.to(device, non_blocking=True)
+            target_sup = target_sup.to(device, non_blocking=True)
+
+            _, _, projected_features_sup = model(input_sup)
+            definitive_mask = (target_sup[:, 0] == 0.0) | (target_sup[:, 0] == 1.0)
+            hard_labels = torch.argmax(target_sup, dim=1)
+
+            features_for_supcon = projected_features_sup[definitive_mask]
+            labels_for_supcon = hard_labels[definitive_mask]
+            if labels_for_supcon.shape[0] > 1:
+                inst_loss = criterion_supcon(features_for_supcon, labels_for_supcon)
 
         # 4. Total Loss Calculation
         loss = (1 - lambda_reg) * loss_cls + lambda_reg * inst_loss
@@ -350,8 +355,16 @@ def main():
         criterion = FocalLossWithProbs(alpha=alpha_w, gamma=args.focal_gamma).to(device, non_blocking= True )
 
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
-    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-    cudnn.benchmark = False
+    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    cudnn.benchmark = True
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer,
+        mode='min',         # Monitor a minimum metric (validation loss)
+        factor=0.5,         # Halve the learning rate when plateauing
+        patience=args.patience // 4, # Wait half the early stop patience before reducing LR
+        verbose=True,
+        min_lr=1e-6         # Do not let the LR drop below this
+    )
 
     # 5. Transforms
     normalize = transforms.Normalize(mean=[0.485, 0.406, 0.406], std=[0.229, 0.224, 0.225])
@@ -413,6 +426,14 @@ def main():
         # ii. start with training based on top instances
         # train_dset.maketraindata(topk)
         train_dset.maket_data(probs, args.k)
+
+        supcon_dset = ut.MILdataset(args.train_lib, trans)
+        supcon_dset.epoch_tile_info = train_dset.epoch_tile_info.copy()
+        supcon_dset.epoch_slide_id_map = train_dset.epoch_slide_id_map.copy()
+        supcon_dset.epoch_target_map = train_dset.epoch_target_map.copy()
+        supcon_dset.epoch_subtype_map = train_dset.epoch_subtype_map.copy()
+        supcon_dset.maket_data(probs, args.k_sup)
+
         train_loader_new = torch.utils.data.DataLoader(
             train_dset,
             batch_size=args.batch_size,
@@ -422,7 +443,14 @@ def main():
         train_dset.modelState(2)
         train_dset.setTransforms(trans)
 
-        train_loss, train_inst_loss = train(epoch + 1, train_loader_new, model,
+        supcon_loader = torch.utils.data.DataLoader(
+            supcon_dset,
+            batch_size=args.batch_size,
+            shuffle=True,
+            num_workers=args.workers,
+            pin_memory=pin_memory)
+
+        train_loss, train_inst_loss = train(epoch + 1, train_loader_new,supcon_loader, model,
                                             criterion, criterion_supcon, optimizer, # <-- Pass new criterion
                                             lambda_reg=args.lambda_sup,
                                             device=device)
@@ -442,8 +470,7 @@ def main():
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss = inference(val_loader, model, criterion, enable_dropout_flag=False)
-
-
+            scheduler.step(val_loss)
             maxs = ut.groupTopKtilesProbabilities(np.array(val_dset.slideIDX), probs, len(val_dset.targets))
 
             true_labels_tensors = val_dset.targets
