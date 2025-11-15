@@ -361,7 +361,7 @@ def main():
         optimizer,
         mode='min',         # Monitor a minimum metric (validation loss)
         factor=0.5,         # Halve the learning rate when plateauing
-        patience=args.patience // 4, # Wait half the early stop patience before reducing LR
+        patience=args.patience // 2, # Wait half the early stop patience before reducing LR
         verbose=True,
         min_lr=1e-6         # Do not let the LR drop below this
     )
