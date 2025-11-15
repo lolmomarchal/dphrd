@@ -64,6 +64,10 @@ parser.add_argument('--focal_alpha', type=float, default=None,
                     help='Alpha parameter (class weight) for Focal Loss. If None, uses --weights argument if not 0.5.')
 parser.add_argument('--k_sup', default=10, type=int,
                     help='The top k tiles per slide used specifically for the supervised contrastive loss.')
+parser.add_argument('--train_inference_dropout_enabled', action='store_true',
+                    help='Enable dropout for the inference step on the training set (top-k selection). Default is False.')
+parser.add_argument('--train_inference_transforms_enabled', action='store_true',
+                    help='Apply training transforms (flipping, color jitter) during the inference step on the training set. Default is False.')
 
 # ================ LOSS ======================
 
@@ -373,10 +377,15 @@ def main():
                                 transforms.RandomRotation(180),
                                 transforms.ColorJitter(brightness=0.5, contrast=[0.2, 1.8], saturation=0, hue=0),
                                 transforms.ToTensor(), normalize])
+
     infer_trans = transforms.Compose([
         transforms.ToTensor(),
         normalize
     ])
+    if args.train_inference_transforms_enabled:
+        infer_train_transforms = trans
+    else:
+        infer_train_transforms = infer_trans
 
     # 6. Dataset start
     train_dset = ut.MILdataset(args.train_lib, trans)
@@ -408,19 +417,12 @@ def main():
         # i. start with overall inference
         train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode) # to select trained slides
         train_dset.modelState(1)
-        train_dset.setTransforms(infer_trans)
+        train_dset.setTransforms(infer_train_transforms)
         infer_loader = torch.utils.data.DataLoader(
             train_dset,
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=pin_memory)
-        probs, loss = inference(infer_loader, model, criterion, enable_dropout_flag=True)
-        if probs.size == 0:
-            print("\n[FATAL ERROR] Inference returned an empty probability array. Cannot group tiles.")
-            # return
-            #
-        if not np.issubdtype(probs.dtype, np.number):
-            print(f"\n[FATAL ERROR] Probabilities dtype is non-numeric: {probs.dtype}. Cannot sort.")
-
+        probs, loss = inference(infer_loader, model, criterion, enable_dropout_flag=args.train_inference_dropout_enabled)
         # topk = ut.groupTopKtiles(np.array(train_dset.slideIDX), probs,
         #                          args.k)  # get top-k tiles for training + prediction
         # ii. start with training based on top instances
