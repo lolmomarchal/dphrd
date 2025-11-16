@@ -37,7 +37,7 @@ parser.add_argument('--batch_size', type=int, default=64, help='Mini-batch size.
 parser.add_argument('--epochs', type=int, default=200, help='Number of training epochs.')
 parser.add_argument('--validation_interval', default=1, type=int,
                     help='How often to run inference on the validation set.')
-parser.add_argument('--k', default=100, type=int,
+parser.add_argument('--k', default=1, type=int,
                     help='The top k tiles based on predicted model probabilities used as representative features of the training classes for each slide.')
 parser.add_argument('--checkpoint', default=None, type=str,
                     help='Checkpoint model to restart a given training session or for transfer learning.')
@@ -482,6 +482,7 @@ def main():
             auc = roc_auc_score(true_labels_1d, maxs)
             accuracy = accuracy_score(true_labels_1d, pred_binary)
             f1 = f1_score(true_labels_1d, pred_binary)
+            torch.cuda.empty_cache()
 
             try:
                 tn, fp, fn, tp = confusion_matrix(true_labels_1d, pred_binary).ravel()

@@ -181,7 +181,7 @@ def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath
 
 
 def selectBestModel (predictionsPath):
-	predictions5x = pd.read_csv(predictionsPath, header=0, index_col=0)
+	predictions5x = p2d.read_csv(predictionsPath, header=0, index_col=0)
 	avgPredictions = predictions5x.loc[:,predictions5x.columns.str.endswith("AverageProb")]
 	bestModels = pd.DataFrame(index=predictions5x.index, columns=avgPredictions.columns)
 
@@ -477,6 +477,11 @@ class MILdataset(data.Dataset):
 					weights = [(1.0 / subtype_counts[s])**0.5 for s in all_subtypes]
 				elif sampling_mode == 'balanced_subtype':
 					weights = [1.0 / subtype_counts[s] for s in all_subtypes]
+				shuffled_original_slide_ids = random.choices(
+					population=unique_original_slide_ids,
+					weights=weights, #
+					k=num_slides_to_sample
+				)
 
 			elif 'target' in sampling_mode:
 				all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.targets]
@@ -486,6 +491,11 @@ class MILdataset(data.Dataset):
 					weights = [(1.0 / target_counts[t])**0.5 for t in all_targets_hard]
 				elif sampling_mode == 'balanced_target':
 					weights = [1.0 / target_counts[t] for t in all_targets_hard]
+				shuffled_original_slide_ids = random.choices(
+					population=unique_original_slide_ids,
+					weights=weights, #
+					k=num_slides_to_sample
+				)
 
 			elif 'combined' in sampling_mode:
 				all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.targets]
@@ -497,16 +507,20 @@ class MILdataset(data.Dataset):
 					weights = [(1.0 / combined_counts[key])**0.5 for key in all_combined_keys]
 				elif sampling_mode == 'balanced_combined':
 					weights = [1.0 / combined_counts[key] for key in all_combined_keys]
+				shuffled_original_slide_ids = random.choices(
+					population=unique_original_slide_ids,
+					weights=weights, #
+					k=num_slides_to_sample
+				)
+			elif "none" in sampling_mode:
+				unique_original_slide_ids = list(range(len(self.slidenames)))
+				num_slides_to_sample = len(unique_original_slide_ids)
+				shuffled_original_slide_ids = unique_original_slide_ids.copy()
+				# random.shuffle(shuffled_original_slide_ids)
 
-			shuffled_original_slide_ids = random.choices(
-				population=unique_original_slide_ids,
-				weights=weights, #
-				k=num_slides_to_sample
-			)
 
 			if counts_to_log:
 				print(f"[INFO] Sampling from base counts: {counts_to_log}")
-
 			sampled_subtypes = [self.subtype[i] for i in shuffled_original_slide_ids]
 			print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
 			sampled_targets = [1 if self.targets[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
@@ -515,10 +529,10 @@ class MILdataset(data.Dataset):
 
 		except Exception as e:
 			print(f"[ERROR] preselect_epoch_slides: Error during weighting: {e}. Falling back to uniform sampling.")
-			shuffled_original_slide_ids = random.choices(
-				population=unique_original_slide_ids,
-				k=num_slides_to_sample
-			)
+			# shuffled_original_slide_ids = random.choices(
+			# 	population=unique_original_slide_ids,
+			# 	k=num_slides_to_sample
+			# )
 
 		selected_slide_set = set(shuffled_original_slide_ids)
 		print(f"[INFO] Pre-selection resulted in {len(selected_slide_set)} unique slides for this epoch's inference.")
