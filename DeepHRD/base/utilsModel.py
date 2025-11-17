@@ -117,14 +117,40 @@ def runMultiGpuInference (i, iModels, pythonVersion, outputPath, modelPath, batc
 def generateFeatureVectorsUsingBestModels (i, iModels, project, projectPath, pythonVersion, outputPath, batch_size, dropoutRate, resolution, bestModels, checkpointModel=None):
 	for l, currentModel in enumerate(iModels):
 		modelPath = os.path.join(outputPath, "training_m" + str(currentModel+1))
+		prefix = f"checkpoint_best_{resolution}_epoch_"
+		all_files = os.listdir(modelPath)
 
-		# Select best checkpoint or use the model number specified by the user
-		existingCheckpointModels = [x for x in os.listdir(modelPath) if ".pth" in x]
-		existingCheckpointModelNumbers = [int(x.split("checkpoint_best_5x_")[1].split(".")[0]) for x in existingCheckpointModels if ".pth" in x]
+		existingCheckpointModels = [f for f in all_files if f.startswith(prefix) and f.endswith(".pth")]
+		existingCheckpointModelNumbers = []
+		for f in existingCheckpointModels:
+			try:
+				# "checkpoint_best_5x_epoch_10.pth" -> "10.pth" -> "10"
+				epoch_str = f.split(prefix)[1].split(".")[0]
+				existingCheckpointModelNumbers.append(int(epoch_str))
+			except Exception:
+				print(f"[Warning] Skipping file, could not parse epoch number: {f}")
+
+		if not existingCheckpointModelNumbers:
+			print(f"[ERROR] No valid checkpoint models found in {modelPath} matching prefix '{prefix}'.")
+			print("Please check your training logs. Skipping feature generation for this model.")
+			# Continue to the next model in the loop
+			continue
+
 		if bestModels[l] != None:
-			bestModel = os.path.join(modelPath, existingCheckpointModels[existingCheckpointModelNumbers.index(bestModels[currentModel])])
+			# Assumes bestModels[currentModel] holds the epoch number
+			best_epoch_num = bestModels[currentModel]
+			bestModel_filename = f"{prefix}{best_epoch_num}.pth"
+			bestModel = os.path.join(modelPath, bestModel_filename)
+			if not os.path.exists(bestModel):
+				print(f"[Warning] Specified best model epoch {best_epoch_num} not found.")
+				print("Falling back to highest epoch number.")
+				best_epoch_num = max(existingCheckpointModelNumbers)
+				bestModel_filename = f"{prefix}{best_epoch_num}.pth"
+				bestModel = os.path.join(modelPath, bestModel_filename)
 		else:
-			bestModel = os.path.join(modelPath, existingCheckpointModels[existingCheckpointModelNumbers.index(max(existingCheckpointModelNumbers))])
+			best_epoch_num = max(existingCheckpointModelNumbers)
+			bestModel_filename = f"{prefix}{best_epoch_num}.pth"
+			bestModel = os.path.join(modelPath, bestModel_filename)
 
 		# Run Train, Validation, and test data through best checkpoint from above
 		testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "trainData.pt") + " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) + " --model " + bestModel + " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution

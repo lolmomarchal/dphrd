@@ -249,9 +249,13 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
             labels_for_supcon = hard_labels[definitive_mask]
             if labels_for_supcon.shape[0] > 1:
                 inst_loss = criterion_supcon(features_for_supcon, labels_for_supcon)
+            del features_for_supcon, target_sup
+        del input, target
+        torch.cuda.empty_cache()
 
         # 4. Total Loss Calculation
         loss = (1 - lambda_reg) * loss_cls + lambda_reg * inst_loss
+
 
         # 5. Backpropagation and Optimization
         optimizer.zero_grad()
@@ -447,7 +451,7 @@ def main():
 
         supcon_loader = torch.utils.data.DataLoader(
             supcon_dset,
-            batch_size=args.batch_size*8,
+            batch_size=args.batch_size*4,
             shuffle=True,
             num_workers=args.workers,
             pin_memory=pin_memory)
