@@ -242,8 +242,7 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
             target_sup = target_sup.to(device, non_blocking=True)
 
             _, _, projected_features_sup = model(input_sup)
-            definitive_mask = (target_sup[:, 0] == 0.0) | (target_sup[:, 0] == 1.0)
-            hard_labels = torch.argmax(target_sup, dim=1)
+            definitive_mask = (target_sup[:, 0] < 0.1) | (target_sup[:, 0] > 0.9)           hard_labels = torch.argmax(target_sup, dim=1)
 
             features_for_supcon = projected_features_sup[definitive_mask]
             labels_for_supcon = hard_labels[definitive_mask]
@@ -268,14 +267,14 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 
         # 7. Slide Output Tracking
         # We need to calculate probs for logging, but not for the loss
-        with torch.no_grad():
-            probs = F.softmax(logits, dim=1)[:, 1]
+        # with torch.no_grad():
+        #     probs = F.softmax(logits, dim=1)[:, 1]
 
-        for sid, t, p in zip(slide_ids.cpu().numpy(), target.cpu(), probs.cpu()):
-            sid_key = int(sid)
-            if sid_key not in slide_outputs:
-                slide_outputs[sid_key] = {"probs": [], "target": t}
-            slide_outputs[sid_key]["probs"].append(p.item())
+        # for sid, t, p in zip(slide_ids.cpu().numpy(), target.cpu(), probs.cpu()):
+        #     sid_key = int(sid)
+        #     if sid_key not in slide_outputs:
+        #         slide_outputs[sid_key] = {"probs": [], "target": t}
+        #     slide_outputs[sid_key]["probs"].append(p.item())
 
     if total_samples == 0:
         epoch_loss = 0.0
