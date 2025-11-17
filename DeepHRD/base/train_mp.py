@@ -344,6 +344,7 @@ def main():
             print(f"[INFO] Using Weighted Soft Cross-Entropy Loss (from metadata: {w.cpu().tolist()})")
         else:
             print("Using Soft Cross-Entropy Loss (unweighted)")
+        w = torch.tensor([0.5, 0.5])
         criterion = SoftCrossEntropyLoss(weight=w).to(device, non_blocking= True )
     elif args.loss_fn == 'focal':
         alpha_w = class_weights
@@ -523,6 +524,14 @@ def main():
                 torch.save(obj, save_path)
             else:
                 early_stop += 1
+                obj = {
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'best_val_loss': best_val_loss,
+                    'optimizer': optimizer.state_dict()
+                }
+                save_path = os.path.join(args.output, f'checkpoint_{args.resolution}_epoch_{epoch + 1}.pth')
+                torch.save(obj, save_path)
 
         elif not args.val_lib:
             pass
