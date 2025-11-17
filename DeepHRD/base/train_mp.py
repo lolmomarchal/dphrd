@@ -242,7 +242,8 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
             target_sup = target_sup.to(device, non_blocking=True)
 
             _, _, projected_features_sup = model(input_sup)
-            definitive_mask = (target_sup[:, 0] < 0.1) | (target_sup[:, 0] > 0.9)           hard_labels = torch.argmax(target_sup, dim=1)
+            definitive_mask = (target_sup[:, 0] < 0.1) | (target_sup[:, 0] > 0.9)
+            hard_labels = torch.argmax(target_sup, dim=1)
 
             features_for_supcon = projected_features_sup[definitive_mask]
             labels_for_supcon = hard_labels[definitive_mask]
