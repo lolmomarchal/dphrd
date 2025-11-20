@@ -15,13 +15,13 @@ class ResNet_dropout(nn.Module):
 		# self.resnet = torchvision.models.resnet.resnet18(pretrained=True)
 		self.resnet = torchvision.models.resnet.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
 
-		# Freezes the first 6 layers of the ResNet architecture
-		count = 0
-		for child in self.resnet.children():
-			count += 1
-			if count < 7:
-				for param in child.parameters():
-					param.requires_grad=False
+		# # Freezes the first 6 layers of the ResNet architecture
+		# count = 0
+		# for child in self.resnet.children():
+		# 	count += 1
+		# 	if count < 7:
+		# 		for param in child.parameters():
+		# 			param.requires_grad=False
 		in_features = self.resnet.fc.in_features
 
 		# Adds dropout into the fully connected layer of the ResNet model and changes the final output to 2 nodes
