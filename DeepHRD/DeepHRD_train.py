@@ -269,7 +269,7 @@ def main ():
 		pool = multiprocessing.Pool(max_seed * max_process_per_gpu)
 		results = []
 		for i in range(max_seed):
-			r = pool.apply_async(utilsModel.runMultiGpuROIs, args=(i, models_parallel[i], args.project, args.projectPath, args.python, outputPath, args.maxROI, args.max_cpu))
+			r = pool.apply_async(utilsModel.runMultiGpuROIs, args=(i, models_parallel[i], args.project, args.projectPath, args.python, outputPath, args.maxROI, args.max_cpu, True, True))
 		results.append(r)
 		pool.close()
 		pool.join()
