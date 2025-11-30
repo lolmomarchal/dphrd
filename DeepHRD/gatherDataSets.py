@@ -328,14 +328,19 @@ def gatherData (files, svsPath, tilesPath):
 			sigExposureSoft = sigMatrix.loc[file, "softLabel"]
 			if sigExposure > SIG_CUTOFF:
 				countsPos += 1
+				print(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
 				data['targets'].append(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
+				print("low")
 			elif sigExposure <= SIG_CUTOFF_LOWER:
 				countsNeg += 1
+				print(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
 				data['targets'].append(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
+				print("high")
 			else:
 				countsAmbig += 1
 				saveSamp = False
 		else:
+			print("uh oh")
 			data['targets'].append(torch.tensor([0, 1]))
 
 		if saveSamp:

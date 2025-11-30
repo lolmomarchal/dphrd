@@ -364,7 +364,7 @@ def main():
         criterion = FocalLossWithProbs(alpha=alpha_w, gamma=args.focal_gamma).to(device, non_blocking= True )
 
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
-    optimizer = optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-3)
     cudnn.benchmark = True
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
@@ -510,8 +510,8 @@ def main():
             log_data['val_err'] = err
             log_data['val_fpr'] = fpr
             log_data['val_fnr'] = fnr
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
+            if err < best_val_loss:
+                best_val_loss = err
                 early_stop = 0
                 print(f"\n  ** New best validation loss: {best_val_loss:.6f} at epoch {epoch + 1}. Saving model. **")
                 obj = {
