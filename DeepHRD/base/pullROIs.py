@@ -304,7 +304,7 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 
 
 
-return(currentTrainData20x)
+	return(currentTrainData20x)
 
 
 
