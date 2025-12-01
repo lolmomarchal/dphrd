@@ -129,6 +129,7 @@ def multiprocess_collectTiles (libraryfile, featureVectorsPath, predictionData, 
 	trainData20x['slides'] = []
 	trainData20x['tiles'] = []
 	trainData20x['targets'] = []
+	trainData20x['subtype'] = []
 
 	# Collect all available WSI
 	availableSlides = [x for x in os.listdir(slidePath) if ".svs" in x or ".ndpi" in x or "jpg" in x]
@@ -168,6 +169,7 @@ def multiprocess_collectTiles (libraryfile, featureVectorsPath, predictionData, 
 		trainData20x['slides'] += currentTrainData20x['slides']
 		trainData20x['tiles'] += currentTrainData20x['tiles']
 		trainData20x['targets'] += currentTrainData20x['targets']
+		trainData20x['subtype'] += currentTrainData20x['subtype']
 
 	# print("All ", trainData20x)
 	return(trainData20x)
@@ -273,8 +275,7 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 			for i in range(xPos, xPos+length, stepStize):
 				for l in range(yPos, yPos+length, stepStize):
 					img_path = os.path.join(outputPath, sampleIndex, "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"]))
-					try:
-						if not os.path.exists(img_path):
+					if not os.path.exists(img_path):
 
 							tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
 							tile_region = tile_region.resize((256,256),Image.BILINEAR)
@@ -288,12 +289,9 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 									normalizeStaining(img_path, saveFile = img_path[:-4])
 								except:
 									continue
-							total_tiles +=1
+					total_tiles +=1
+					currentGrid.append(img_path)
 
-						currentGrid.append(img_path)
-					except Exception as e:
-						print(f"[ERROR] when saving ROIs: {e}")
-						continue
 		print(f"total tiles for slide: {total_tiles}")
 
 		# Add the resampled tiles to the new data structure for training/validating/testing the second resolution model.
@@ -301,6 +299,7 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 		currentTrainData20x['tiles'].append(currentGrid)
 		currentTrainData20x['targets'].append(lib['targets'][slideIDX])
 		currentTrainData20x['subtype'].append(lib['subtype'][slideIDX])
+		print(lib['subtype'][slideIDX])
 
 
 
