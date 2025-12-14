@@ -283,7 +283,13 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 							if laplaceVariance(pil_img):
 								blurry_tiles +=1
 								continue
-							norm_img = Image.fromarray(normalizeStaining_nosave(pil_img))
+							try:
+								norm_img = Image.fromarray(normalizeStaining_nosave(pil_img))
+							except:
+								blurry_tiles +=1
+
+								continue
+
 							norm_img.save(img_path, "PNG", icc_profile=None)
 							# if stain_norm:
 							# 	try:

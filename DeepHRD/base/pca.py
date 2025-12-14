@@ -14,10 +14,11 @@ def pcaCalc (features, saveFig, outputPath, slideID, epoch, slideName):
     fully connected layers of the MIL-ResNet model for each tile of a WSI.
     '''
     features = pd.DataFrame(features)
-    saveFig = True
+    # saveFig = True
     probs = list(features[4])
 
     features_for_pca = features.drop(4, axis=1)
+    print(features_for_pca)
 
 
     scaler = StandardScaler()
