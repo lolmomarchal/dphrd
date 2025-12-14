@@ -12,7 +12,6 @@ import matplotlib.pyplot as plt
 import random
 import os
 import PIL.Image as Image
-import PIL.Image as Image
 Image.MAX_IMAGE_PIXELS = None
 import pca 
 import argparse
@@ -22,7 +21,7 @@ import os
 
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
-from normalizeStaining import normalizeStaining
+from normalizeStaining import normalizeStaining,normalizeStaining_nosave
 from utilsPreprocessing import laplaceVariance
 
 def main ():
@@ -269,6 +268,7 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 		# For each selected ROI, resample at 20x magnification. This saves the new tiles into the current outputPath specified above.
 		currentGrid = []
 		total_tiles = 0
+		blurry_tiles = 0
 		for maxTile in topTiles:
 			xPos = int(maxTile[0][1:])
 			yPos = int(maxTile[1][1:])
@@ -280,26 +280,28 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 							tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
 							tile_region = tile_region.resize((256,256),Image.BILINEAR)
 							pil_img = tile_region.convert("RGB")
-							# if laplaceVariance(pil_img):
-							# 	print("[DEBUG] IMAGE WAS BLURRY")
-	                        #     continue
-							pil_img.save(img_path, "PNG", icc_profile=None)
-							if stain_norm:
-								try:
-									normalizeStaining(img_path, saveFile = img_path[:-4])
-								except:
-									continue
+							if laplaceVariance(pil_img):
+								blurry_tiles +=1
+								continue
+							norm_img = Image.fromarray(normalizeStaining_nosave(pil_img))
+							norm_img.save(img_path, "PNG", icc_profile=None)
+							# if stain_norm:
+							# 	try:
+							# 		normalizeStaining(img_path, saveFile = img_path[:-4])
+							# 	except:
+							# 		continue
 					total_tiles +=1
 					currentGrid.append(img_path)
 
 		print(f"total tiles for slide: {total_tiles}")
+		print(f"blurry tiles for slide: {blurry_tiles}")
+
 
 		# Add the resampled tiles to the new data structure for training/validating/testing the second resolution model.
 		currentTrainData20x['slides'].append(x[1])
 		currentTrainData20x['tiles'].append(currentGrid)
 		currentTrainData20x['targets'].append(lib['targets'][slideIDX])
 		currentTrainData20x['subtype'].append(lib['subtype'][slideIDX])
-		print(lib['subtype'][slideIDX])
 
 
 
