@@ -174,7 +174,7 @@ def multiprocess_collectTiles (libraryfile, featureVectorsPath, predictionData, 
 	return(trainData20x)
 
 
-
+import shutil
 def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData, stain_norm, trainData):
 	'''
 	Performs PCA on the feature vectors for a single WSI at a time. The final ROIs are resampled and saved. 
@@ -197,9 +197,6 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 			continue
 
 		try:
-				# Collect relevant info for each WSI including the index number, sample name, sample index, and
-				# the objective power. Determines the appropriate stepSize and tile size given the objective power
-				# for the current slide.
 				slideIDX = lib['slides'].index(x[1])
 				print(f"slideIDX: {slideIDX}")
 				sample = x[1].split("/")[-1].split(".")[0]
@@ -208,7 +205,6 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 					sampleIndex = collectSampleIndex(sample)
 				except Exception as e:
 					print(f"[EXCEPTION]: failure when getting sampleindex {e}")
-
 				print(f"sampleIndex: {sampleIndex}")
 				objective_power = objectiveMat.loc[int(sampleIndex), 'objective']
 				print(f"objective_power: {objective_power}")
@@ -242,13 +238,10 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 		    print(f"Not enough tiles (<2) for PCA on slide {x[1]}. Skipping.") # DEBUG PRINT
 		    continue
 		indeces = pca.pcaCalc (pcaFeatures, False, outputPath, sample, '1', sample)
-		
-		# Pull out the top tile coordinates based on the selected indeces from the PCA along with their
-		# corresponding probabilites
+
 		topTiles = [list(coords.iloc[x]) for x in indeces]
 		probs = [float(currentFrame.iloc[x, 2]) for x in indeces]
 
-		# If the current data is from the training set, limit the max number of tiles
 		if trainData or predictionData:
 			if len(topTiles) > tileCountCutoff:
 				print(f"Downsampling from {len(topTiles)} to {tileCountCutoff} tiles.") # DEBUG PRINT
@@ -261,9 +254,7 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 			s = openslide.OpenSlide(os.path.join(slidePath,newSlide))
 			currentAvailableSlides.remove(newSlide)
 		except Exception as e:
-		    print(f"[ERROR] Could not open the source slide file for {sample}. Skipping.") # DEBUG PRINT
-		    print(e)
-		    continue
+			continue
 
 		# For each selected ROI, resample at 20x magnification. This saves the new tiles into the current outputPath specified above.
 		currentGrid = []
@@ -275,6 +266,22 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 			for i in range(xPos, xPos+length, stepStize):
 				for l in range(yPos, yPos+length, stepStize):
 					img_path = os.path.join(outputPath, sampleIndex, "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"]))
+					possible_models = ["training_20x_m1", "training_20x_m2", "training_20x_m3", "training_20x_m4", "training_20x_m5"]
+					current_model_str = next((m for m in possible_models if m in img_path), None)
+					if current_model_str:
+						for model in possible_models:
+							if model == current_model_str:
+								continue
+							prev_path = img_path.replace(current_model_str, model)
+
+							if os.path.exists(prev_path):
+								try:
+									shutil.copy2(prev_path, img_path)
+									break
+								except Exception as e:
+									print(f"Error copying from previous model: {e}")
+
+
 					if not os.path.exists(img_path):
 
 							tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
@@ -291,11 +298,6 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 								continue
 
 							norm_img.save(img_path, "PNG", icc_profile=None)
-							# if stain_norm:
-							# 	try:
-							# 		normalizeStaining(img_path, saveFile = img_path[:-4])
-							# 	except:
-							# 		continue
 					total_tiles +=1
 					currentGrid.append(img_path)
 

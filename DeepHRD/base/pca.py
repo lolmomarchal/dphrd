@@ -56,26 +56,26 @@ def pcaCalc (features, saveFig, outputPath, slideID, epoch, slideName):
     labels = best_gmm.predict(clustering_features)
     bestK = best_gmm.n_components
 
-    avg_probs_per_cluster = []
-    unique_labels = sorted(list(set(labels)))
+    # --- choose target GMM component (soft, probability-weighted) ---
+    cluster_scores = []
+    for k in range(cluster_probs.shape[1]):
+        score = np.sum(cluster_probs[:, k] * probs) / (np.sum(cluster_probs[:, k]) + 1e-8)
+        cluster_scores.append(score)
 
-    for label in unique_labels:
-        indices = [i for i, x in enumerate(labels) if x == label]
-        avg_prob = np.mean([probs[i] for i in indices])
-        avg_probs_per_cluster.append((label, avg_prob))
+    target_cluster_label = int(np.argmax(cluster_scores))
 
-    if not avg_probs_per_cluster:
-        target_cluster_label = 0
-    else:
-        target_cluster_label = max(avg_probs_per_cluster, key=lambda item: item[1])[0]
+    # --- percentile-based ROI selection ---
+    target_probs = cluster_probs[:, target_cluster_label]
 
-    selected_indices = []
-    for i, p_vec in enumerate(cluster_probs):
-        if p_vec[target_cluster_label] > 0.5: # Confidence threshold
-            selected_indices.append(i)
+    perc = 95
+    thr = np.percentile(target_probs, perc)
+    selected_indices = np.where(target_probs >= thr)[0].tolist()
 
+    # --- fallback for weak signal ---
     if len(selected_indices) == 0:
-        selected_indices = [np.argmax(cluster_probs[:, target_cluster_label])]
+        print("used fallback")
+        K = min(3, len(target_probs))
+        selected_indices = list(np.argsort(target_probs)[-K:])
 
     if saveFig:
         labels_color = ['goldenrod' if x == max(probs) else 'darkred' if x > 0.5 else 'teal' for x in probs]
