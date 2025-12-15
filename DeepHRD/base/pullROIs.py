@@ -18,7 +18,7 @@ import argparse
 import multiprocessing as mp
 import sys
 import os
-
+import torch.multiprocessing
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, project_root)
 from normalizeStaining import normalizeStaining,normalizeStaining_nosave
@@ -40,6 +40,10 @@ def main ():
 		2. The new training, validaiton, and testing data structures.
 
 	'''
+	try:
+		torch.multiprocessing.set_sharing_strategy('file_system')
+	except RuntimeError:
+		pass
 
 	global args, slidePath, tileConversionMatrix, objectiveMat, RESOLUTION, outputPath, tileCountCutoff
 
@@ -255,62 +259,71 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 			currentAvailableSlides.remove(newSlide)
 		except Exception as e:
 			continue
+		s = None
+		try:
+			newSlide = [y for y in currentAvailableSlides if sample in y][0]
+			s = openslide.OpenSlide(os.path.join(slidePath,newSlide))
+			currentAvailableSlides.remove(newSlide)
+			# For each selected ROI, resample at 20x magnification. This saves the new tiles into the current outputPath specified above.
+			currentGrid = []
+			total_tiles = 0
+			blurry_tiles = 0
+			for maxTile in topTiles:
+				xPos = int(maxTile[0][1:])
+				yPos = int(maxTile[1][1:])
+				for i in range(xPos, xPos+length, stepStize):
+					for l in range(yPos, yPos+length, stepStize):
+						img_path = os.path.join(outputPath, sampleIndex, "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"]))
+						possible_models = ["training_20x_m1", "training_20x_m2", "training_20x_m3", "training_20x_m4", "training_20x_m5"]
+						current_model_str = next((m for m in possible_models if m in img_path), None)
+						if current_model_str:
+							for model in possible_models:
+								if model == current_model_str:
+									continue
+								prev_path = img_path.replace(current_model_str, model)
 
-		# For each selected ROI, resample at 20x magnification. This saves the new tiles into the current outputPath specified above.
-		currentGrid = []
-		total_tiles = 0
-		blurry_tiles = 0
-		for maxTile in topTiles:
-			xPos = int(maxTile[0][1:])
-			yPos = int(maxTile[1][1:])
-			for i in range(xPos, xPos+length, stepStize):
-				for l in range(yPos, yPos+length, stepStize):
-					img_path = os.path.join(outputPath, sampleIndex, "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"]))
-					possible_models = ["training_20x_m1", "training_20x_m2", "training_20x_m3", "training_20x_m4", "training_20x_m5"]
-					current_model_str = next((m for m in possible_models if m in img_path), None)
-					if current_model_str:
-						for model in possible_models:
-							if model == current_model_str:
-								continue
-							prev_path = img_path.replace(current_model_str, model)
+								if os.path.exists(prev_path):
+									try:
+										shutil.copy2(prev_path, img_path)
+										break
+									except Exception as e:
+										print(f"Error copying from previous model: {e}")
 
-							if os.path.exists(prev_path):
+
+						if not os.path.exists(img_path):
+
+								tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
+								tile_region = tile_region.resize((256,256),Image.BILINEAR)
+								pil_img = tile_region.convert("RGB")
+								if laplaceVariance(pil_img):
+									blurry_tiles +=1
+									continue
 								try:
-									shutil.copy2(prev_path, img_path)
-									break
-								except Exception as e:
-									print(f"Error copying from previous model: {e}")
+									norm_img = Image.fromarray(normalizeStaining_nosave(pil_img))
+								except:
+									blurry_tiles +=1
+
+									continue
+
+								norm_img.save(img_path, "PNG", icc_profile=None)
+						total_tiles +=1
+						currentGrid.append(img_path)
+
+			print(f"total tiles for slide: {total_tiles}")
+			print(f"blurry tiles for slide: {blurry_tiles}")
 
 
-					if not os.path.exists(img_path):
-
-							tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
-							tile_region = tile_region.resize((256,256),Image.BILINEAR)
-							pil_img = tile_region.convert("RGB")
-							if laplaceVariance(pil_img):
-								blurry_tiles +=1
-								continue
-							try:
-								norm_img = Image.fromarray(normalizeStaining_nosave(pil_img))
-							except:
-								blurry_tiles +=1
-
-								continue
-
-							norm_img.save(img_path, "PNG", icc_profile=None)
-					total_tiles +=1
-					currentGrid.append(img_path)
-
-		print(f"total tiles for slide: {total_tiles}")
-		print(f"blurry tiles for slide: {blurry_tiles}")
-
-
-		# Add the resampled tiles to the new data structure for training/validating/testing the second resolution model.
-		currentTrainData20x['slides'].append(x[1])
-		currentTrainData20x['tiles'].append(currentGrid)
-		currentTrainData20x['targets'].append(lib['targets'][slideIDX])
-		currentTrainData20x['subtype'].append(lib['subtype'][slideIDX])
-
+			# Add the resampled tiles to the new data structure for training/validating/testing the second resolution model.
+			currentTrainData20x['slides'].append(x[1])
+			currentTrainData20x['tiles'].append(currentGrid)
+			currentTrainData20x['targets'].append(lib['targets'][slideIDX])
+			currentTrainData20x['subtype'].append(lib['subtype'][slideIDX])
+		except Exception as e:
+			print(f"Error processing slide {sample}: {e}")
+			continue
+		finally:
+			if s is not None:
+				s.close()
 
 
 	return(currentTrainData20x)
