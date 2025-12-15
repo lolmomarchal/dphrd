@@ -205,10 +205,10 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 				print(f"slideIDX: {slideIDX}")
 				sample = x[1].split("/")[-1].split(".")[0]
 				print(f"sample: {sample}")
-				try:
-					sampleIndex = collectSampleIndex(sample)
-				except Exception as e:
-					print(f"[EXCEPTION]: failure when getting sampleindex {e}")
+				# try:
+				sampleIndex = collectSampleIndex(sample)
+				# except Exception as e:
+				# 	print(f"[EXCEPTION]: failure when getting sampleindex {e}")
 				print(f"sampleIndex: {sampleIndex}")
 				objective_power = objectiveMat.loc[int(sampleIndex), 'objective']
 				print(f"objective_power: {objective_power}")
