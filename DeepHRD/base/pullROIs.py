@@ -1,5 +1,6 @@
+
 #!/usr/bin/env python3
- 
+
 #Author: Erik N. Bergstrom
 
 #Contact: ebergstr@eng.ucsd.edu
@@ -13,7 +14,7 @@ import random
 import os
 import PIL.Image as Image
 Image.MAX_IMAGE_PIXELS = None
-import pca 
+import pca
 import argparse
 import multiprocessing as mp
 import sys
@@ -26,20 +27,20 @@ from utilsPreprocessing import laplaceVariance
 
 def main ():
 	'''
-	Script to locate, select, and resample ROIs from the first resolution models. This method uses PCA to select the ROIs based upon
-	the feature vectors extracted from the penultimate layer of the model's fully connected layers.
+    Script to locate, select, and resample ROIs from the first resolution models. This method uses PCA to select the ROIs based upon
+    the feature vectors extracted from the penultimate layer of the model's fully connected layers.
 
-	Parameters:
-		Passed via command line arguments (See command "python3 test_final.py -h" for more details)
+    Parameters:
+       Passed via command line arguments (See command "python3 test_final.py -h" for more details)
 
-	Returns:
-		None
+    Returns:
+       None
 
-	Outputs:
-		1. Newly resampled tiles at 20x magnification. 
-		2. The new training, validaiton, and testing data structures.
+    Outputs:
+       1. Newly resampled tiles at 20x magnification.
+       2. The new training, validaiton, and testing data structures.
 
-	'''
+    '''
 	try:
 		torch.multiprocessing.set_sharing_strategy('file_system')
 	except RuntimeError:
@@ -73,7 +74,7 @@ def main ():
 	parser.add_argument('--max_cpu', default=0, type=int, help='Maximum number of CPUs to utilize for parallelization (default: None - utilizes all available cpus)')
 
 	args = parser.parse_args()
-	
+
 	# Resampling magnification
 	RESOLUTION = 20
 	# tileCountCutoff = 500000
@@ -109,8 +110,6 @@ def main ():
 	testData20x = multiprocess_collectTiles (args.test_lib, args.feature_vectors_test, predictionData, args.max_cpu, args.stain_norm, trainData=False)
 	torch.save(testData20x, os.path.join(outputPath,"testData20x.pt"))
 
-
-
 def collectSampleIndex (file):
 	sample = file.split("/")[-1].split(".")[0]
 	sampleIndex = int(tileConversionMatrix.loc[sample].iloc[0])
@@ -142,6 +141,8 @@ def multiprocess_collectTiles (libraryfile, featureVectorsPath, predictionData, 
 		processors = max_cpu
 	else:
 		processors = mp.cpu_count()
+
+	# want to do parall
 	max_seed = processors
 	if processors > len(availableSlides):
 		max_seed = len(availableSlides)
@@ -150,7 +151,7 @@ def multiprocess_collectTiles (libraryfile, featureVectorsPath, predictionData, 
 	iter_bin = 0
 	for i in range(0, len(availableSlides), 1):
 		if iter_bin == max_seed:
-			iter_bin = 0
+			iter_bin = 00
 		iterations_parallel[iter_bin].append(availableSlides[i])
 		iter_bin += 1
 
@@ -179,10 +180,10 @@ def multiprocess_collectTiles (libraryfile, featureVectorsPath, predictionData, 
 
 
 import shutil
-def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData, stain_norm, trainData):
+def collectDownsampledTiles(currentSamples, lib, featureVectors, predictionData, stain_norm, trainData):
 	'''
-	Performs PCA on the feature vectors for a single WSI at a time. The final ROIs are resampled and saved. 
-	'''
+    Performs PCA on the feature vectors for a single WSI at a time. The final ROIs are resampled and saved.
+    '''
 
 	currentTrainData20x = {}
 	currentTrainData20x['slides'] = []
@@ -192,44 +193,50 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 
 	currentAvailableSlides = currentSamples
 
-
 	# Iterate across each WSI
 	for x in set(featureVectors.index):
-		print(f"\n--- Processing ROIs for slide: {x[1]} ---") # DEBUG PRINT
+		print(f"\n--- Processing ROIs for slide: {x[1]} ---")  # DEBUG PRINT
 
 		if x[1].split("/")[-1] not in currentSamples:
 			continue
 
 		try:
-				slideIDX = lib['slides'].index(x[1])
-				print(f"slideIDX: {slideIDX}")
-				sample = x[1].split("/")[-1].split(".")[0]
-				print(f"sample: {sample}")
-				# try:
-				sampleIndex = collectSampleIndex(sample)
-				# except Exception as e:
-				# 	print(f"[EXCEPTION]: failure when getting sampleindex {e}")
-				print(f"sampleIndex: {sampleIndex}")
-				objective_power = objectiveMat.loc[int(sampleIndex), 'objective']
-				print(f"objective_power: {objective_power}")
+			slideIDX = lib['slides'].index(x[1])
+			print(f"slideIDX: {slideIDX}")
+			sample = x[1].split("/")[-1].split(".")[0]
+			print(f"sample: {sample}")
 
-				if type(objective_power) == pd.Series:
-					objective_power = list(objective_power)[0]
-				if objective_power == 40:
-						if RESOLUTION == 20:
-								stepStize = 512
-								length = 2048
-				elif objective_power == 20:
-						if RESOLUTION == 20:
-								stepStize = 256
-								length = 1024                           
+			try:
+				sampleIndex = collectSampleIndex(sample)
+			except Exception as e:
+				print(f"[EXCEPTION]: failure when getting sampleindex {e}")
+
+			print(f"sampleIndex: {sampleIndex}")
+
+			# Retrieve objective power
+			objective_power = objectiveMat.loc[int(sampleIndex), 'objective']
+			print(f"objective_power: {objective_power}")
+
+			if type(objective_power) == pd.Series:
+				objective_power = list(objective_power)[0]
+
+			# Determine step size and length based on objective power and resolution
+			if objective_power == 40:
+				if RESOLUTION == 20:
+					stepStize = 512
+					length = 2048
+			elif objective_power == 20:
+				if RESOLUTION == 20:
+					stepStize = 256
+					length = 1024
+
 		except Exception as e:
-		    print(f"[WARNING] Could not find info for slide {x[1]} in the library or objective files. Skipping.") # DEBUG PRINT
-		    continue
+			print(f"[WARNING] Could not find info for slide {x[1]} in the library or objective files. Skipping.")  # DEBUG PRINT
+			continue
 
 		# Create the output directory for the new tiles for the current sample
 		if not os.path.exists(os.path.join(outputPath, sampleIndex)):
-				os.makedirs(os.path.join(outputPath, sampleIndex))
+			os.makedirs(os.path.join(outputPath, sampleIndex))
 
 		# Downsample the feature vector file to the current sample and pull out the x,y coordinates for each tile
 		currentFrame = featureVectors.iloc[featureVectors.index.get_level_values(1) == x[0]]
@@ -238,95 +245,101 @@ def collectDownsampledTiles (currentSamples, lib, featureVectors, predictionData
 		# Select the activation values for each node from the feature vector and perform PCA
 		pcaFeatures = currentFrame[[i for i in range(4, 517)]]
 		pcaFeatures.reset_index(drop=True, inplace=True)
+
 		if len(coords.to_numpy().tolist()) < 2:
-		    print(f"Not enough tiles (<2) for PCA on slide {x[1]}. Skipping.") # DEBUG PRINT
-		    continue
-		indeces = pca.pcaCalc (pcaFeatures, False, outputPath, sample, '1', sample)
+			print(f"Not enough tiles (<2) for PCA on slide {x[1]}. Skipping.")  # DEBUG PRINT
+			continue
+
+		indeces = pca.pcaCalc(pcaFeatures, False, outputPath, sample, '1', sample)
 
 		topTiles = [list(coords.iloc[x]) for x in indeces]
 		probs = [float(currentFrame.iloc[x, 2]) for x in indeces]
 
 		if trainData or predictionData:
 			if len(topTiles) > tileCountCutoff:
-				print(f"Downsampling from {len(topTiles)} to {tileCountCutoff} tiles.") # DEBUG PRINT
-
+				print(f"Downsampling from {len(topTiles)} to {tileCountCutoff} tiles.")  # DEBUG PRINT
 				topTiles = random.sample(topTiles, tileCountCutoff)
 
 		# Open the current slide
 		try:
 			newSlide = [y for y in currentAvailableSlides if sample in y][0]
-			s = openslide.OpenSlide(os.path.join(slidePath,newSlide))
+			s = openslide.OpenSlide(os.path.join(slidePath, newSlide))
 			currentAvailableSlides.remove(newSlide)
 		except Exception as e:
 			continue
-		s = None
-		try:
-			newSlide = [y for y in currentAvailableSlides if sample in y][0]
-			s = openslide.OpenSlide(os.path.join(slidePath,newSlide))
-			currentAvailableSlides.remove(newSlide)
-			# For each selected ROI, resample at 20x magnification. This saves the new tiles into the current outputPath specified above.
-			currentGrid = []
-			total_tiles = 0
-			blurry_tiles = 0
-			for maxTile in topTiles:
-				xPos = int(maxTile[0][1:])
-				yPos = int(maxTile[1][1:])
-				for i in range(xPos, xPos+length, stepStize):
-					for l in range(yPos, yPos+length, stepStize):
-						img_path = os.path.join(outputPath, sampleIndex, "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"]))
-						possible_models = ["training_20x_m1", "training_20x_m2", "training_20x_m3", "training_20x_m4", "training_20x_m5"]
-						current_model_str = next((m for m in possible_models if m in img_path), None)
-						if current_model_str:
-							for model in possible_models:
-								if model == current_model_str:
-									continue
-								prev_path = img_path.replace(current_model_str, model)
 
-								if os.path.exists(prev_path):
-									try:
-										shutil.copy2(prev_path, img_path)
-										break
-									except Exception as e:
-										print(f"Error copying from previous model: {e}")
+		# For each selected ROI, resample at 20x magnification.
+		# This saves the new tiles into the current outputPath specified above.
+		currentGrid = []
+		total_tiles = 0
+		blurry_tiles = 0
 
+		for maxTile in topTiles:
+			xPos = int(maxTile[0][1:])
+			yPos = int(maxTile[1][1:])
 
-						if not os.path.exists(img_path):
+			for i in range(xPos, xPos + length, stepStize):
+				for l in range(yPos, yPos + length, stepStize):
 
-								tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
-								tile_region = tile_region.resize((256,256),Image.BILINEAR)
-								pil_img = tile_region.convert("RGB")
-								if laplaceVariance(pil_img):
-									blurry_tiles +=1
-									continue
+					img_name = "-".join([args.project, sampleIndex, "tile", "x" + str(i), "y" + str(l), "w256", "h256.png"])
+					img_path = os.path.join(outputPath, sampleIndex, img_name)
+
+					# Check for existing models to copy from
+					possible_models = ["training_20x_m1", "training_20x_m2", "training_20x_m3", "training_20x_m4", "training_20x_m5"]
+					current_model_str = next((m for m in possible_models if m in img_path), None)
+
+					if current_model_str:
+						for model in possible_models:
+							if model == current_model_str:
+								continue
+							prev_path = img_path.replace(current_model_str, model)
+
+							if os.path.exists(prev_path):
 								try:
-									norm_img = Image.fromarray(normalizeStaining_nosave(pil_img))
-								except:
-									blurry_tiles +=1
+									shutil.copy2(prev_path, img_path)
+									break
+								except Exception as e:
+									print(f"Error copying from previous model: {e}")
 
-									continue
+					# If image does not exist, create it
+					if not os.path.exists(img_path):
+						try:
+							tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
+							tile_region = tile_region.resize((256, 256), Image.BILINEAR)
+							pil_img = tile_region.convert("RGB")
 
-								norm_img.save(img_path, "PNG", icc_profile=None)
-						total_tiles +=1
+							if laplaceVariance(pil_img):
+								blurry_tiles += 1
+								continue
+
+							try:
+								norm_img = Image.fromarray(normalizeStaining_nosave(pil_img))
+							except:
+								blurry_tiles += 1
+								continue
+
+							norm_img.save(img_path, "PNG", icc_profile=None)
+							total_tiles += 1
+							currentGrid.append(img_path)
+
+						except Exception as e:
+							print(f"Error processing tile at {i}, {l}: {e}")
+							continue
+					else:
+						# If image exists (e.g. copied from prev model), add to grid
+						total_tiles += 1
 						currentGrid.append(img_path)
 
-			print(f"total tiles for slide: {total_tiles}")
-			print(f"blurry tiles for slide: {blurry_tiles}")
+		print(f"total tiles for slide: {total_tiles}")
+		print(f"blurry tiles for slide: {blurry_tiles}")
 
+		# Add the resampled tiles to the new data structure
+		currentTrainData20x['slides'].append(x[1])
+		currentTrainData20x['tiles'].append(currentGrid)
+		currentTrainData20x['targets'].append(lib['targets'][slideIDX])
+		currentTrainData20x['subtype'].append(lib['subtype'][slideIDX])
 
-			# Add the resampled tiles to the new data structure for training/validating/testing the second resolution model.
-			currentTrainData20x['slides'].append(x[1])
-			currentTrainData20x['tiles'].append(currentGrid)
-			currentTrainData20x['targets'].append(lib['targets'][slideIDX])
-			currentTrainData20x['subtype'].append(lib['subtype'][slideIDX])
-		except Exception as e:
-			print(f"Error processing slide {sample}: {e}")
-			continue
-		finally:
-			if s is not None:
-				s.close()
-
-
-	return(currentTrainData20x)
+	return currentTrainData20x
 
 
 
