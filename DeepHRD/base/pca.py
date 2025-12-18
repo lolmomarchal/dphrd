@@ -70,9 +70,14 @@ def pcaCalc (features, saveFig, outputPath, slideID, epoch, slideName):
     target_probs = cluster_probs[:, target_cluster_label]
 
     perc = 95
-    thr = np.percentile(target_probs, perc)
-    selected_indices = np.where(target_probs >= thr)[0].tolist()
+    min_resp = 0.3  # or 0.25
+    mask = target_probs >= min_resp
+    core_probs = target_probs[mask]
 
+    thr = np.percentile(core_probs, 95)
+    selected_indices = np.where(
+        (target_probs >= thr) & (target_probs >= min_resp)
+    )[0]
     fallback_used = False
     if len(selected_indices) == 0:
         fallback_used = True
