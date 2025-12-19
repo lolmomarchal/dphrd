@@ -428,8 +428,15 @@ def calculateError (pred,real):
 	return (accuracy, fpr, fnr)
 
 
-def safe_open(path): #
-		return Image.open(path)
+def safe_open(path):
+	try:
+		if not os.path.exists(path):
+			return None
+		# We add .convert('RGB') to ensure we don't have grayscale/alpha issues later
+		return Image.open(path).convert('RGB')
+	except (PIL.UnidentifiedImageError, IOError, OSError) as e:
+		print(f"[Warning] Skipping corrupted image: {path} | Error: {e}")
+		return None
 class MILdataset(data.Dataset):
 	'''
     Class edited used from (https://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
@@ -693,33 +700,40 @@ class MILdataset(data.Dataset):
 
 	def __getitem__(self, index):
 		'''
-        Accesses a tile based upon the preset mode (inference or training)
-        '''
-		if self.mode == 1:
-			# If we are in a pre-selected epoch, use the epoch data
-			if self.epoch_tile_info is not None:
-				original_grid_index, new_epoch_slide_id = self.epoch_tile_info[index]
-				slideIDX = new_epoch_slide_id
-				target = self.epoch_target_map[new_epoch_slide_id]
-				tile_path = self.grid[original_grid_index]
-			else:
-				slideIDX = self.slideIDX[index]
-				target = self.targets[slideIDX]
-				tile_path = self.grid[index]
+		 Accesses a tile based upon the preset mode (inference or training)
+		 '''
+		try:
+			if self.mode == 1:
+				if self.epoch_tile_info is not None:
+					original_grid_index, new_epoch_slide_id = self.epoch_tile_info[index]
+					slideIDX = new_epoch_slide_id
+					target = self.epoch_target_map[new_epoch_slide_id]
+					tile_path = self.grid[original_grid_index]
+				else:
+					slideIDX = self.slideIDX[index]
+					target = self.targets[slideIDX]
+					tile_path = self.grid[index]
 
-			img = safe_open(tile_path)
+				img = safe_open(tile_path)
 
-		elif self.mode == 2:
-			slideIDX, tile_path, target = self.t_data[index] # target is already the tensor
-			img = safe_open(tile_path)
+			elif self.mode == 2:
+				slideIDX, tile_path, target = self.t_data[index]
+				img = safe_open(tile_path)
 
-		else:
-			raise IndexError(f"Dataset mode not set to 1 or 2. Current mode: {self.mode}")
+			# --- CORRUPTION SAFETY CHECK ---
+			if img is None:
+				# Try the next image if this one is corrupted
+				return self.__getitem__((index + 1) % self.__len__())
 
-		if self.transform is not None:
-			img = self.transform(img)
+			if self.transform is not None:
+				img = self.transform(img)
 
-		return (img, target, slideIDX)
+			return (img, target, slideIDX)
+
+		except Exception as e:
+			# Fallback for any other unexpected errors
+			print(f"[Runtime Error] Index {index} failed: {e}")
+			return self.__getitem__((index + 1) % self.__len__())
 
 	def __len__(self):
 		'''
