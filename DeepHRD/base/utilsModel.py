@@ -438,13 +438,13 @@ class MILdataset(data.Dataset):
 
 	def __init__(self, libraryfile, transform=None):
 		'''
-        Initializes all class atributes.
-        *** This is your original __init__ logic, which is what your .pt file has. ***
-        '''
+		 Initializes all class atributes and filters out missing images.
+		 '''
 		lib = torch.load(libraryfile, map_location='cpu')
 
 		grid = []
 		slideIDX = []
+		invalid_count = 0  # Counter for missing files
 
 		if 'tiles' not in lib:
 			print(f"[FATAL ERROR in MILdataset] Your .pt file '{libraryfile}' is missing the required 'tiles' key.")
@@ -454,17 +454,33 @@ class MILdataset(data.Dataset):
 			self.subtype = []
 			self.slidenames = []
 		else:
-			print(f"[INFO MILdataset] Loading tiles from '{libraryfile}'...")
-			for i, g in enumerate(lib['tiles']):
-				grid.extend(g)
-				slideIDX.extend([i] * len(g))
+			print(f"[INFO MILdataset] Validating tile paths in '{libraryfile}'...")
+
+			# Iterate through each slide's tiles
+			for i, slide_tiles in enumerate(lib['tiles']):
+				valid_tiles_for_this_slide = []
+				for tile_path in slide_tiles:
+					# Check if the file actually exists on the system
+					if os.path.exists(tile_path):
+						valid_tiles_for_this_slide.append(tile_path)
+					else:
+						invalid_count += 1
+
+				# Only add valid tiles to the global grid
+				grid.extend(valid_tiles_for_this_slide)
+				slideIDX.extend([i] * len(valid_tiles_for_this_slide))
 
 			self.slidenames = lib['slides']
 			self.targets = lib['targets']
-			self.subtype = lib ["subtype"]
+			self.subtype = lib["subtype"]
 			self.grid = grid
 			self.slideIDX = slideIDX
-			print(f"[INFO MILdataset] Loaded {len(self.grid)} total tiles from {len(self.slidenames)} slides.")
+
+			print(f"--- Dataset Loading Summary ---")
+			print(f"[INFO] Total valid tiles loaded: {len(self.grid)}")
+			print(f"[INFO] Total invalid/missing tiles skipped: {invalid_count}")
+			print(f"[INFO] From {len(self.slidenames)} slides.")
+			print(f"-------------------------------")
 
 		self.transform = transform
 		self.mode = 1
