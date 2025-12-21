@@ -153,27 +153,29 @@ def generateFeatureVectorsUsingBestModels (i, iModels, project, projectPath, pyt
 			bestModel = os.path.join(modelPath, bestModel_filename)
 
 		# Run Train, Validation, and test data through best checkpoint from above
-		testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "trainData.pt") + " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) + " --model " + bestModel + " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution
-		testCommand2 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions_train.csv")
-		testCommand3 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_train.tsv")
-		os.system(testCommand)
-		os.system(testCommand2)
-		os.system(testCommand3)
+		if not os.path.exists(os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_train.tsv")):
+			testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "trainData.pt") + " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) + " --model " + bestModel + " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution
+			testCommand2 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions_train.csv")
+			testCommand3 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_train.tsv")
+			os.system(testCommand)
+			os.system(testCommand2)
+			os.system(testCommand3)
+		if not os.path.exists(os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv")):
 
-		testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "valData.pt") + " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) + " --model " + bestModel + " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution
-		testCommand2 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions_val.csv")
-		testCommand3 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv")
-		os.system(testCommand)
-		os.system(testCommand2)
-		os.system(testCommand3)
+			testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "valData.pt") + " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) + " --model " + bestModel + " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution
+			testCommand2 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions_val.csv")
+			testCommand3 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_val.tsv")
+			os.system(testCommand)
+			os.system(testCommand2)
+			os.system(testCommand3)
+		if not os.path.exists(os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_test.tsv")):
 
-		testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "testData.pt") + " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) + " --model " + bestModel + " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution
-		testCommand2 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions_test.csv")
-		testCommand3 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_test.tsv")
-		os.system(testCommand)
-		os.system(testCommand2)
-		os.system(testCommand3)
-
+			testCommand = pythonVersion + " base/test_final.py --lib " + os.path.join(outputPath, "testData.pt") + " --output " + os.path.join(outputPath, "training_m" + str(currentModel+1)) + " --model " + bestModel + " --batch_size " + str(batch_size) + " --BN_reps 1 --gpu " + str(i) + " --dropoutRate 0.0 --resolution " + resolution
+			testCommand2 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions.csv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "predictions_test.csv")
+			testCommand3 = "mv " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors.tsv") + " " + os.path.join(outputPath, "training_m" + str(currentModel+1), "feature_vectors_test.tsv")
+			os.system(testCommand)
+			os.system(testCommand2)
+			os.system(testCommand3)
 		torch.cuda.empty_cache()
 
 
