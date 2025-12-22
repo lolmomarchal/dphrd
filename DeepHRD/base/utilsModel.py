@@ -724,6 +724,7 @@ class MILdataset(data.Dataset):
 
 			# --- CORRUPTION SAFETY CHECK ---
 			if img is None:
+				print(f"Error: {self.grid[index]}")
 				# Try the next image if this one is corrupted
 				return self.__getitem__((index + 1) % self.__len__())
 
