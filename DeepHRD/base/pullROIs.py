@@ -304,8 +304,8 @@ def collectDownsampledTiles(currentSamples, lib, featureVectors, predictionData,
 
                     if current_model_str:
                         for model in possible_models:
-                            if model == current_model_str:
-                                continue
+                            # if model == current_model_str:
+                            #     continue
                             prev_path = img_path.replace(current_model_str, model)
 
                             if os.path.exists(prev_path):
