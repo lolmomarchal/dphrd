@@ -42,7 +42,6 @@ def pcaCalc (features, saveFig, outputPath, slideID, epoch, slideName):
         sil.append(silhouette_score(principal_tiles_Df, labels, metric = 'euclidean'))
     if not sil:
         return list(np.argsort(a)[-min(10, len(a)):])
-    bestK = [i for i,x in enumerate(sil) if x ==max(sil)][
     bestK = [i for i,x in enumerate(sil) if x ==max(sil)][0] + 2
     kmeans = KMeans(init="random", n_clusters=bestK, n_init=10, max_iter=300, random_state=42)
     kmeans.fit(principal_tiles_Df)
