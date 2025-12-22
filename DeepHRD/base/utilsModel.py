@@ -202,7 +202,7 @@ def runMultiGpuROIs (i, iModels, project, projectPath, pythonVersion, outputPath
 		if stain_norm:
 			roiCommand +=" --stain_norm"
 
-
+		print(roiCommand)
 		os.system(roiCommand)
 		torch.cuda.empty_cache()
 
