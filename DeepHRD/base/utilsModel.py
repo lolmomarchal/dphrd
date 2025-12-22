@@ -429,7 +429,7 @@ def calculateError (pred,real):
 	fnr = fn / real_pos_count if real_pos_count > 0 else 0.0
 	return (accuracy, fpr, fnr)
 
-
+import PIL
 def safe_open(path):
 	try:
 		if not os.path.exists(path):
