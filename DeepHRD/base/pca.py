@@ -2,153 +2,100 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.decomposition import PCA
-from sklearn.mixture import GaussianMixture # Replaced KMeans with GMM
+from sklearn.datasets import make_blobs
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.metrics import silhouette_samples
 from sklearn.preprocessing import StandardScaler
+from sklearn.manifold import TSNE
 import random
+
 
 def pcaCalc (features, saveFig, outputPath, slideID, epoch, slideName):
     '''
-    Performs PCA followed by Gaussian Mixture Model (GMM) clustering.
-    Selects the optimal number of components using BIC.
+    Performs principal component analysis on a collection of feature vectors. Specifically, the features are extracted from the
+    penultimate layer of the fully connected layers of the MIL-ResNet model for each tile of a WSI. All tile feature vectors for
+    a single WSI are processed simultaneously.
     '''
     features = pd.DataFrame(features)
-    probs = list(features[4])
-
-    features_for_pca = features.drop(4, axis=1)
-
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features_for_pca)
-
-    pca_clustering = PCA(n_components=0.95)
-    clustering_features = pca_clustering.fit_transform(features_scaled)
-
-    pca_plotting = PCA(n_components=2)
-    plotting_features = pca_plotting.fit_transform(features_scaled)
-    principal_tiles_Df = pd.DataFrame(
-        plotting_features,
-        columns=['principal component 1', 'principal component 2']
-    )
-
-    n_components_range = range(2, min(6, len(probs)))
-    best_gmm = None
-    lowest_bic = np.inf
-
-    if len(probs) < 2:
-        return list(range(len(probs)))
-
-    for n_c in n_components_range:
-        gmm = GaussianMixture(n_components=n_c, n_init=5, random_state=42)
-        gmm.fit(clustering_features)
-        bic = gmm.bic(clustering_features)
-        if bic < lowest_bic:
-            lowest_bic = bic
-            best_gmm = gmm
-
-    if best_gmm is None:
-        best_gmm = GaussianMixture(
-            n_components=2, n_init=5, random_state=42
-        ).fit(clustering_features)
-
-    cluster_probs = best_gmm.predict_proba(clustering_features)
-    labels = best_gmm.predict(clustering_features)
-    bestK = best_gmm.n_components
-
-    cluster_sizes = {
-        k: int(np.sum(labels == k)) for k in range(bestK)
-    }
-
-    cluster_scores = []
-    for k in range(cluster_probs.shape[1]):
-        score = np.sum(cluster_probs[:, k] * probs) / (
-                np.sum(cluster_probs[:, k]) + 1e-8
-        )
-        cluster_scores.append(score)
-
-    target_cluster_label = int(np.argmax(cluster_scores))
+    a = list(features[4])
+    features = features.drop(4, axis=1)
+    pca_tiles = PCA(n_components=2)
+    principalComponents = pca_tiles.fit_transform(features)
+    principal_tiles_Df = pd.DataFrame(data = principalComponents
+                                      , columns = ['principal component 1', 'principal component 2'])
 
 
-    target_probs = cluster_probs[:, target_cluster_label]
+    # Perform Kmeans clustering across a range of solutions using the one with the maximum silhouette score. The minimum number of clusters
+    # is 2, while the max is 5.
+    n = len(a)
+    kmax = min(5, n - 1)
 
-    perc = 95
-    min_resp = 0.3  # or 0.25
-    mask = target_probs >= min_resp
-    core_probs = target_probs[mask]
-
-    thr = np.percentile(core_probs, 95)
-    selected_indices = np.where(
-        (target_probs >= thr) & (target_probs >= min_resp)
-    )[0]
-    fallback_used = False
-    if len(selected_indices) == 0:
-        fallback_used = True
-        K = min(3, len(target_probs))
-        selected_indices = list(np.argsort(target_probs)[-K:])
-
-
-    n_tiles = len(probs)
-    n_rois = len(selected_indices)
-    # DEBUG
-    print("\n" + "=" * 60)
-    print(f"Slide: {slideName} | Epoch: {epoch}")
-    print(f"GMM components (bestK): {bestK}")
-    print("Cluster sizes:")
-    for k in range(bestK):
-        print(f"  Cluster {k}: {cluster_sizes[k]} tiles")
-
-    print("Cluster scores (probability-weighted):")
-    for k, s in enumerate(cluster_scores):
-        print(f"  Cluster {k}: {s:.4f}")
-
-    print(f"--> Selected cluster: {target_cluster_label}")
-    print(f"ROIs selected: {n_rois}/{n_tiles} "
-          f"({100 * n_rois / n_tiles:.2f}%)")
-    print(f"Fallback used: {fallback_used}")
-    print("=" * 60 + "\n")
+    sil = []
+    for k in range(2, kmax + 1):
+        kmeans = KMeans(n_clusters = k, n_init='auto').fit(principal_tiles_Df)
+        labels = kmeans.labels_
+        if len(set(labels)) == 1:
+            return(list(random.sample(np.arange(len(labels)), 10)))
+        elif len(set(labels)) == 2 and len(a) == 2:
+            return([i for i,x in enumerate(a) if x ==max(a)])
+        sil.append(silhouette_score(principal_tiles_Df, labels, metric = 'euclidean'))
+    bestK = [i for i,x in enumerate(sil) if x ==max(sil)][0] + 2
+    kmeans = KMeans(init="random", n_clusters=bestK, n_init=10, max_iter=300, random_state=42)
+    kmeans.fit(principal_tiles_Df)
 
 
+    # Locate the cluster/tile with the maximum prediction probability.
+    labels = kmeans.labels_
+    sil_scores = silhouette_samples(principal_tiles_Df, labels)
+    maxLabel = labels[[i for i, x in enumerate(a) if x == max(a)][0]]
+
+    indeces = []
+    # Calculate the 95% quantile of the silhouette scores
+    npPercentileCutoff = np.percentile(sil_scores, 95)
+
+    # Pull indeces of all tiles that belong to the cluster with the maximum prediction
+    # probability and have a silhouette score greater than the 95% quantile cutoff.
+    for n, (x,z)  in enumerate(zip(labels, sil_scores)):
+        if x == maxLabel and z > npPercentileCutoff:
+            indeces.append(n)
+    if len(indeces) == 0:
+        for n, x  in enumerate(labels):
+            if x == maxLabel:
+                indeces.append(n)
+
+    # Options to save the PCA results as as plot for each sample.
     if saveFig:
-        labels_color = [
-            'goldenrod' if x == max(probs)
-            else 'darkred' if x > 0.5 else 'teal'
-            for x in probs
-        ]
-        edgecolor = ['darkred' if x > 0.5 else 'teal' for x in probs]
+        labels = ['goldenrod' if x == max(a) else 'darkred' if x > 0.5 else 'teal' for x in a]
+        edgecolor = ['darkred' if x > 0.5 else 'teal' for x in a]
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=14)
+        plt.xlabel('Principal Component - 1',fontsize=20)
+        plt.ylabel('Principal Component - 2',fontsize=20)
+        plt.title("Principal Component Analysis",fontsize=20)
+        targets = [0]
+        colors = ['r']
+        for target, color in zip(targets,colors):
+            plt.scatter(principal_tiles_Df['principal component 1']
+                        , principal_tiles_Df['principal component 2'], c = a, cmap='hot', s = 50, alpha=0.6, edgecolor=edgecolor)
 
-        plt.figure(figsize=(10, 8))
-        plt.xlabel('Principal Component - 1 (Scaled)', fontsize=20)
-        plt.ylabel('Principal Component - 2 (Scaled)', fontsize=20)
-        plt.title(f"GMM Selection (k={bestK})", fontsize=20)
+        if bestK == 2:
+            plt.scatter([kmeans.cluster_centers_[0][0],kmeans.cluster_centers_[1][0]],[kmeans.cluster_centers_[0][1],kmeans.cluster_centers_[1][1]], color='grey', s=100, alpha=0.6)
+        elif bestK == 3:
+            plt.scatter([kmeans.cluster_centers_[0][0],kmeans.cluster_centers_[1][0], kmeans.cluster_centers_[2][0]], [kmeans.cluster_centers_[0][1], kmeans.cluster_centers_[1][1], kmeans.cluster_centers_[2][1]], color='grey', s=100, alpha=0.6)
+        elif bestK == 4 :
+            plt.scatter([kmeans.cluster_centers_[0][0],kmeans.cluster_centers_[1][0], kmeans.cluster_centers_[2][0], kmeans.cluster_centers_[3][0]], [kmeans.cluster_centers_[0][1], kmeans.cluster_centers_[1][1], kmeans.cluster_centers_[2][1], kmeans.cluster_centers_[3][1]], color='grey', s=100, alpha=0.6)
+        elif bestK == 5:
+            plt.scatter([kmeans.cluster_centers_[0][0],kmeans.cluster_centers_[1][0], kmeans.cluster_centers_[2][0], kmeans.cluster_centers_[3][0], kmeans.cluster_centers_[4][0]], [kmeans.cluster_centers_[0][1], kmeans.cluster_centers_[1][1], kmeans.cluster_centers_[2][1], kmeans.cluster_centers_[3][1], kmeans.cluster_centers_[4][1]], color='grey', s=100, alpha=0.6)
 
-        plt.scatter(
-            principal_tiles_Df['principal component 1'],
-            principal_tiles_Df['principal component 2'],
-            c=probs, cmap='hot', s=50, alpha=0.6,
-            edgecolor=edgecolor
-        )
-
-        newPointsX, newPointsY = zip(*[
-            [
-                principal_tiles_Df['principal component 1'][x],
-                principal_tiles_Df['principal component 2'][x]
-            ] for x in selected_indices
-        ])
-        plt.scatter(
-            newPointsX, newPointsY,
-            alpha=0.8, edgecolor='lime',
-            marker="*", s=140, label='Selected ROI'
-        )
-
-        plt.legend()
-        plt.savefig(
-            outputPath + "slide_" + slideName +
-            "_epoch_" + str(epoch) + ".pdf",
-            bbox_inches='tight'
-        )
+        newPointsX, newPointsY = zip(*[[principal_tiles_Df['principal component 1'][x],principal_tiles_Df['principal component 2'][x]] for x in indeces])
+        plt.scatter(newPointsX,newPointsY, alpha=0.6, edgecolor='black', marker="*")
+        plt.savefig(outputPath + "slide_" + slideName + "_epoch_" + str(epoch) + ".pdf",  bbox_inches='tight')
         plt.close()
-
-    return (selected_indices)
-
+    return(indeces)
 
 def readFeatures (file):
     features = pd.read_csv(file, sep="\t", header=None, usecols=[i for i in range(4, 517)])
     return(features)
+
+

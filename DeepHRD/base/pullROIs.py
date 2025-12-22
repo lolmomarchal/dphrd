@@ -47,7 +47,7 @@ def main ():
     except RuntimeError:
         pass
 
-    global args, slidePath, tileConversionMatrix, objectiveMat, RESOLUTION, outputPath, tileCountCutoff
+    global args, slidePath, tileConversionMatrix, objectiveMat, RESOLUTION, zoutputPath, tileCountCutoff
 
     parser = argparse.ArgumentParser(description='Pulls regions of interests using a model trained at a lower magnification (i.e. 5x)')
     parser.add_argument('--project', type=str, default='', help='Project name')
@@ -255,12 +255,11 @@ def collectDownsampledTiles(currentSamples, lib, featureVectors, predictionData,
         currentFrame = featureVectors.iloc[featureVectors.index.get_level_values(1) == x[0]]
         coords = featureVectors.iloc[featureVectors.index.get_level_values(1) == x[0], [0, 1]]
 
-        # Select the activation values for each node from the feature vector and perform PCA
         pcaFeatures = currentFrame[[i for i in range(4, 517)]]
         pcaFeatures.reset_index(drop=True, inplace=True)
 
         if len(coords.to_numpy().tolist()) < 2:
-            print(f"Not enough tiles (<2) for PCA on slide {x[1]}. Skipping.")  # DEBUG PRINT
+            print(f"Not enough tiles (<2) for PCA on slide {x[1]}. Skipping.")
             continue
 
         indeces = pca.pcaCalc(pcaFeatures, False, outputPath, sample, '1', sample)
