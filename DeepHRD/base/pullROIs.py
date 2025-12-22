@@ -47,7 +47,7 @@ def main ():
     except RuntimeError:
         pass
 
-    global args, slidePath, tileConversionMatrix, objectiveMat, RESOLUTION, zoutputPath, tileCountCutoff
+    global args, slidePath, tileConversionMatrix, objectiveMat, RESOLUTION, outputPath, tileCountCutoff
 
     parser = argparse.ArgumentParser(description='Pulls regions of interests using a model trained at a lower magnification (i.e. 5x)')
     parser.add_argument('--project', type=str, default='', help='Project name')
