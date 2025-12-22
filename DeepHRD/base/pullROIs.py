@@ -18,6 +18,7 @@ import pca
 import argparse
 import multiprocessing as mp
 import sys
+
 import os
 import torch.multiprocessing
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -309,13 +310,15 @@ def collectDownsampledTiles(currentSamples, lib, featureVectors, predictionData,
 
                             if os.path.exists(prev_path):
                                 try:
+                                    with Image.open(prev_path) as im:
+                                        im.verify()   # checks file integrity
                                     img_path = prev_path
-                                    # shutil.copy2(prev_path, img_path)
                                     break
                                 except Exception as e:
+                                    img_path = os.path.join(outputPath, sampleIndex, img_name)
                                     print(f"Error copying from previous model: {e}")
 
-                    # If image does not exist, create it
+# If image does not exist, create it
                     if not os.path.exists(img_path):
                         try:
                             tile_region = s.read_region((i, l), 0, (stepStize, stepStize))
