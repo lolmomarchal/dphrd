@@ -315,9 +315,10 @@ def collectDownsampledTiles(currentSamples, lib, featureVectors, predictionData,
                                     img_path = prev_path
                                     break
                                 except Exception as e:
-                                    img_path = os.path.join(outputPath, sampleIndex, img_name)
-                                    if prev_path == img_path:
-                                        os.remove(img_path)
+                                    os.remove(prev_path)
+                                    img_path = prev_path
+                                    # if prev_path == img_path:
+                                    #     os.remove(img_path)
                                     print(f"Error copying from previous model: {e}")
 
 # If image does not exist, create it
