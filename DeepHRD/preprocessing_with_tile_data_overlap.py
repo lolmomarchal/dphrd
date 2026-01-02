@@ -1194,7 +1194,7 @@ def multiprocess_training_slides_to_images(numProcessors=None):
 	Each process will process a range of slide numbers.
 	"""
 
-	with open(BASE_DIR + "objectiveInfo.txt", "w") as out:
+	with open(os.path.join(BASE_DIR , "objectiveInfo.txt"), "w") as out:
 		pass
 
 	# how many processes to use
