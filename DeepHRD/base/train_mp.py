@@ -364,15 +364,20 @@ def main():
         criterion = FocalLossWithProbs(alpha=alpha_w, gamma=args.focal_gamma).to(device, non_blocking= True )
 
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
-    optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-3)
     cudnn.benchmark = True
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode='min',         # Monitor a minimum metric (validation loss)
-        factor=0.5,         # Halve the learning rate when plateauing
-        patience=args.patience // 2, # Wait half the early stop patience before reducing LR
-        verbose=True,
-        min_lr=1e-6         # Do not let the LR drop below this
+    # 1. Use AdamW for better Weight Decay handling
+    optimizer = torch.optim.AdamW(
+        model.parameters(), 
+        lr=1e-4, 
+        weight_decay=1e-2
+    )
+    
+    # 2. Use Cosine Annealing instead of Plateau
+    # T_max should be the total number of epochs you plan to run
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, 
+        T_max=args.n_epochs, 
+        eta_min=1e-6
     )
 
     # 5. Transforms
