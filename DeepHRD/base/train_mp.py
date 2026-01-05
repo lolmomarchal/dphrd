@@ -454,7 +454,7 @@ def main():
         supcon_dset.epoch_slide_id_map = train_dset.epoch_slide_id_map.copy()
         supcon_dset.epoch_target_map = train_dset.epoch_target_map.copy()
         supcon_dset.epoch_subtype_map = train_dset.epoch_subtype_map.copy()
-        supcon_dset.maket_data(probs, args.k_sup)
+        # supcon_dset.maket_data(probs, args.k_sup)
 
         train_loader_new = torch.utils.data.DataLoader(
             train_dset,
