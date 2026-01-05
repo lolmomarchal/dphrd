@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from torchvision.models import ResNet18_Weights
+from torchvision.models import ResNet34_Weights
 
 
 class ResNet_dropout(nn.Module):
