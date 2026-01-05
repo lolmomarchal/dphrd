@@ -36,11 +36,11 @@ class ResNet_dropout(nn.Module):
         )
 
     def forward(self, x):
-		features = self.resnet(x) 
+        features = self.resnet(x) 
         
         logits = self.classifier(features)
-		if self.training:
-			projected_features = self.projection_head(features)
-			return logits, features, projected_features
-		else:
-			return logits
+        if self.training:
+            projected_features = self.projection_head(features)
+            return logits, features, projected_features
+        else:
+            return logits
