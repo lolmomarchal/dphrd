@@ -610,44 +610,58 @@ class MILdataset(data.Dataset):
 
 		print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
 	def maket_data(self, all_tile_probs, k):
-		slide_to_all_tiles = defaultdict(list)
-		if len(self.epoch_tile_info) != len(all_tile_probs):
-			print(f"[ERROR] maket_data: Mismatch! Have {len(self.epoch_tile_info)} tiles in epoch info but {len(all_tile_probs)} probs. Aborting.")
-			self.t_data = []
-			return
-		for i in range(len(all_tile_probs)):
-			original_grid_index, new_epoch_slide_id = self.epoch_tile_info[i]
-
-			slide_id = new_epoch_slide_id # Use the new ID
-
-			tile_data = (
-				self.grid[original_grid_index],   # 0: tile_path
-				self.epoch_target_map[slide_id],  # 1: target
-				all_tile_probs[i],                # 2: prob
-				self.epoch_subtype_map[slide_id]  # 3: subtype
-			)
-			slide_to_all_tiles[slide_id].append(tile_data)
-
-		unique_slide_ids = list(slide_to_all_tiles.keys())
-		shuffled_slide_ids = unique_slide_ids
-		random.shuffle(shuffled_slide_ids)
-		self.t_data =[]
-		for slide_id in shuffled_slide_ids:
-			all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
-			sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
-			num_to_sample = min(k, len(sorted_tiles))
-			if num_to_sample ==0:
-				continue
-			top_k_tiles = sorted_tiles[:num_to_sample]
-			for tile_to_add in top_k_tiles:
-				self.t_data.append(
-					(
-						slide_id,       # slide_id (this is the new epoch ID)
-						tile_to_add[0], # tile_path
-						tile_to_add[1]  # target
-					)
-
-				)
+	    slide_to_all_tiles = defaultdict(list)
+	    if len(self.epoch_tile_info) != len(all_tile_probs):
+	        print(f"[ERROR] maket_data: Mismatch! Have {len(self.epoch_tile_info)} tiles in epoch info but {len(all_tile_probs)} probs. Aborting.")
+	        self.t_data = []
+	        return
+	
+	    # Grouping tiles by slide
+	    for i in range(len(all_tile_probs)):
+	        original_grid_index, new_epoch_slide_id = self.epoch_tile_info[i]
+	        slide_id = new_epoch_slide_id 
+	        tile_data = (
+	            self.grid[original_grid_index],  # 0: tile_path
+	            self.epoch_target_map[slide_id], # 1: target
+	            all_tile_probs[i],               # 2: prob
+	            self.epoch_subtype_map[slide_id] # 3: subtype
+	        )
+	        slide_to_all_tiles[slide_id].append(tile_data)
+	
+	    unique_slide_ids = list(slide_to_all_tiles.keys())
+	    random.shuffle(unique_slide_ids)
+	    
+	    self.t_data = []
+	    for slide_id in unique_slide_ids:
+	        all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
+	        sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
+	        
+	        num_available = len(sorted_tiles)
+	        if num_available == 0:
+	            continue
+	
+	        selected_tiles = []
+	        
+	        if num_available <= k:
+	            selected_tiles = sorted_tiles
+	        else:
+	            selected_tiles = sorted_tiles[:(k-1)]
+	            
+	       
+	            pool_start = k - 1
+	            pool_end = min(pool_start + 15, num_available)
+	            random_pool = sorted_tiles[pool_start:pool_end]
+	            
+	            selected_tiles.append(random.choice(random_pool))
+	
+	        for tile_to_add in selected_tiles:
+	            self.t_data.append(
+	                (
+	                    slide_id,       # new epoch ID
+	                    tile_to_add[0], # tile_path
+	                    tile_to_add[1]  # target
+	                )
+	            )
 
 	def maketraindata(self, idxs):
 		slide_to_tiles = defaultdict(list)
