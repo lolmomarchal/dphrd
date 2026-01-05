@@ -35,7 +35,7 @@ class ResNet_dropout(nn.Module):
             nn.Linear(projection_dim, projection_dim)
         )
 
-	def forward(self, x):
+    def forward(self, x):
 		features = self.resnet(x) 
         
         logits = self.classifier(features)
