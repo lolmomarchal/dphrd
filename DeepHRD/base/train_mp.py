@@ -377,11 +377,22 @@ def main():
 
     # 5. Transforms
     normalize = transforms.Normalize(mean=[0.485, 0.406, 0.406], std=[0.229, 0.224, 0.225])
-    trans = transforms.Compose([transforms.RandomHorizontalFlip(),
-                                transforms.RandomVerticalFlip(),
-                                transforms.RandomRotation(180),
-                                transforms.ColorJitter(brightness=0.5, contrast=[0.2, 1.8], saturation=0, hue=0),
-                                transforms.ToTensor(), normalize])
+    # trans = transforms.Compose([transforms.RandomHorizontalFlip(),
+    #                             transforms.RandomVerticalFlip(),
+    #                             transforms.RandomRotation(180),
+    #                             transforms.ColorJitter(brightness=0.5, contrast=[0.2, 1.8], saturation=0, hue=0),
+    #                             transforms.ToTensor(), normalize])
+    trans = transforms.Compose([
+      transforms.RandomHorizontalFlip(),
+      transforms.RandomVerticalFlip(),
+      transforms.RandomRotation(180),
+      
+      transforms.RandomResizedCrop(224, scale=(0.8, 1.0)), 
+      transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05, hue=0.02),
+      
+      transforms.ToTensor(),
+      normalize
+        ])
 
     infer_trans = transforms.Compose([
         transforms.ToTensor(),
@@ -428,8 +439,7 @@ def main():
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=pin_memory)
         probs, loss = inference(infer_loader, model, criterion, enable_dropout_flag=args.train_inference_dropout_enabled)
-        # topk = ut.groupTopKtiles(np.array(train_dset.slideIDX), probs,
-        #                          args.k)  # get top-k tiles for training + prediction
+     
         # ii. start with training based on top instances
         # train_dset.maketraindata(topk)
         train_dset.maket_data(probs, args.k)
