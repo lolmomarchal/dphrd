@@ -77,7 +77,7 @@ class SoftCrossEntropyLoss(nn.Module):
     """
     def __init__(self, weight=None, reduction='mean'):
         super(SoftCrossEntropyLoss, self).__init__()
-        self.weight = weight # Shape (2)
+        self.weight = weight
         self.reduction = reduction
 
     def forward(self, logits, targets):
@@ -85,9 +85,8 @@ class SoftCrossEntropyLoss(nn.Module):
         loss = -(targets * log_probs)
 
         if self.weight is not None:
-            # Convert (2) weight tensor to (1, 2) and broadcast across the batch dimension (64)
             weight = self.weight.to(logits.device).unsqueeze(0)
-            loss = loss * weight # Now, (64, 2) * (1, 2) is possible via broadcasting, resulting in (64, 2)
+            loss = loss * weight
 
         # Sum over classes. Resulting 'loss' shape is (64)
         loss = loss.sum(dim=1)
@@ -112,20 +111,16 @@ class FocalLossWithProbs(nn.Module):
         probs = F.softmax(logits, dim=1)
         log_probs = F.log_softmax(logits, dim=1)
 
-        # Calculate the focal term (1 - p_c)^gamma
         focal_weight = (1 - probs) ** self.gamma
 
-        # Base cross-entropy term (y_c * log(p_c)) combined with focal weight
-        # 'loss' shape is (N, C) -> (Batch_size, 2)
+
         loss = -targets * focal_weight * log_probs
 
-        # --- FIX: Apply alpha weighting using broadcasting ---
         if self.alpha is not None:
-            # unsqueeze(0) changes shape from (2) to (1, 2) for broadcasting
             alpha = self.alpha.to(logits.device).unsqueeze(0)
             loss = alpha * loss # Now (N, 2) * (1, 2) is possible
 
-        loss = loss.sum(dim=1)  # sum over classes, result shape (N)
+        loss = loss.sum(dim=1)
 
         if self.reduction == "none":
             return loss
@@ -165,7 +160,7 @@ def inference(loader, model, criterion, enable_dropout_flag = False):
             batch_size = input.size(0)
             total_samples += batch_size
             if device == "cuda":
-                with autocast():
+                with autocast(): #run with autocast bc we dont care as much about FP16 v FP32 for simple prediction
                     logits = model(input)
                     output = F.softmax(logits, dim=1)
                     loss = criterion(logits, target)
@@ -208,17 +203,14 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
     if len(loader.dataset) == 0:
         print(f"[EPOCH {run}] Warning: Training dataset is empty. Skipping train step.")
         return 0.0, 0.0
-
-    slide_outputs = {}
     supcon_iter = iter(supcon_loader)
     for i, (input, target, slide_ids) in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[TRAINING]"):
         input = input.to(device, non_blocking= True )
-        target = target.to(device, non_blocking= True )  # Target shape is (B, 2), e.g., [[0.0, 1.0], [0.3, 0.7]]
-        slide_ids = slide_ids.to(device, non_blocking= True )
+        target = target.to(device, non_blocking= True )
+        slide_ids = slide_ids.to(device, non_blocking= True)
         batch_size = input.size(0)
         total_samples += batch_size
 
-        # 1. Forward Pass & main classification loss w/ k =1
         logits, _, projected_features = model(input)
         loss_cls = criterion(logits, target)
 
@@ -226,7 +218,7 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
         inst_loss = torch.tensor(0.0, device=device)
         input_sup, target_sup = None, None
         if lambda_reg != 0:
-            # do supervise contrast loss on k_sup tiles and only for super sure
+            # do supervise contrast loss on k_sup tiles and only for super sure < within 90th percentile
             try:
                 input_sup, target_sup, _ = next(supcon_iter)
             except StopIteration:
@@ -250,32 +242,15 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
             if labels_for_supcon.shape[0] > 1:
                 inst_loss = criterion_supcon(features_for_supcon, labels_for_supcon)
             del features_for_supcon, target_sup
-        del input, target
+        del input, target # do NOT remove will make computer crash due to GPU memory
         torch.cuda.empty_cache()
-
-        # 4. Total Loss Calculation
         loss = (1 - lambda_reg) * loss_cls + lambda_reg * inst_loss
-
-
-        # 5. Backpropagation and Optimization
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
-        # 6. Aggregation (for epoch-end reporting)
         running_loss += loss.item() * batch_size
-        running_inst_loss += inst_loss.item() * batch_size # Accumulate the (potentially 0) inst_loss
-
-        # 7. Slide Output Tracking
-        # We need to calculate probs for logging, but not for the loss
-        # with torch.no_grad():
-        #     probs = F.softmax(logits, dim=1)[:, 1]
-
-        # for sid, t, p in zip(slide_ids.cpu().numpy(), target.cpu(), probs.cpu()):
-        #     sid_key = int(sid)
-        #     if sid_key not in slide_outputs:
-        #         slide_outputs[sid_key] = {"probs": [], "target": t}
-        #     slide_outputs[sid_key]["probs"].append(p.item())
+        running_inst_loss += inst_loss.item() * batch_size #
 
     if total_samples == 0:
         epoch_loss = 0.0
@@ -295,7 +270,6 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 best_val_loss = np.inf
 
 def main():
-    # 1. Initiate params + output
     torch.set_num_threads(1)
     global best_val_loss, device, args
     args = parser.parse_args()
@@ -309,7 +283,6 @@ def main():
         torch.cuda.set_device(args.gpu)
         print(f"[INFO] CUDA is available. Process will be run on {torch.cuda.get_device_name(args.gpu)}")
 
-    # 2. Calculate class weights -> done by using hard labels
     print(f"[INFO] Reading metadata from {args.train_lib} to calculate class weights...")
     lib = torch.load(args.train_lib, map_location='cpu')
     if 'targets' not in lib:
@@ -329,7 +302,6 @@ def main():
             weights = total_samples / (num_classes * sorted_counts)
             class_weights = torch.FloatTensor(weights).to(device, non_blocking= True )
             print(f"Auto-calculated weights from argmax of 'targets' key: {class_weights.cpu().tolist()}")
-    # 3. Initiate model
     model = RNN(args.dropoutRate)
     if args.checkpoint:
         model.load_state_dict(torch.load(args.checkpoint)["state_dict"])
@@ -344,7 +316,7 @@ def main():
             print(f"[INFO] Using Weighted Soft Cross-Entropy Loss (from metadata: {w.cpu().tolist()})")
         else:
             print("Using Soft Cross-Entropy Loss (unweighted)")
-        w = torch.tensor([0.5, 0.5])
+        # w = torch.tensor([0.5, 0.5])
         criterion = SoftCrossEntropyLoss(weight=w).to(device, non_blocking= True )
     elif args.loss_fn == 'focal':
         alpha_w = class_weights
@@ -365,22 +337,18 @@ def main():
 
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     cudnn.benchmark = True
-    # 1. Use AdamW for better Weight Decay handling
-    optimizer = torch.optim.AdamW(
-        model.parameters(), 
-        lr=1e-4, 
-        weight_decay=1e-2
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr=3e-4,
+        weight_decay=1e-4
     )
-    
-    # 2. Use Cosine Annealing instead of Plateau
-    # T_max should be the total number of epochs you plan to run
+
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, 
-        T_max=args.n_epochs, 
+        optimizer,
+        T_max=args.epochs,
         eta_min=1e-6
     )
 
-    # 5. Transforms
     normalize = transforms.Normalize(mean=[0.485, 0.406, 0.406], std=[0.229, 0.224, 0.225])
     # trans = transforms.Compose([transforms.RandomHorizontalFlip(),
     #                             transforms.RandomVerticalFlip(),
@@ -408,7 +376,6 @@ def main():
     else:
         infer_train_transforms = infer_trans
 
-    # 6. Dataset start
     train_dset = ut.MILdataset(args.train_lib, trans)
     if device == "cpu":
         pin_memory = False
@@ -421,7 +388,6 @@ def main():
             val_dset,
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=pin_memory)
-    # 7. Logging
     log_path = os.path.join(args.output, f'training_log_{resolution}.csv')
     with open(log_path, 'w', newline='') as f:
         writer = csv.writer(f)
@@ -429,7 +395,6 @@ def main():
             'epoch', 'train_loss', 'train_inst_loss', 'val_loss', 'val_acc',
             'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr'
         ])
-    # 8. training loop
     early_stop = 0
     for epoch in tqdm.tqdm(range(args.epochs), total=args.epochs):
         if early_stop == args.patience:
@@ -476,6 +441,7 @@ def main():
                                             criterion, criterion_supcon, optimizer, # <-- Pass new criterion
                                             lambda_reg=args.lambda_sup,
                                             device=device)
+        scheduler.step()
         log_data = {
             'epoch': epoch + 1,
             'train_loss': train_loss,
@@ -492,7 +458,6 @@ def main():
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss = inference(val_loader, model, criterion, enable_dropout_flag=False)
-            scheduler.step(val_loss)
             maxs = ut.groupTopKtilesProbabilities(np.array(val_dset.slideIDX), probs, len(val_dset.targets))
 
             true_labels_tensors = val_dset.targets
@@ -517,7 +482,6 @@ def main():
                 fnr = np.nan
             err = (fpr + fnr) / 2. if not (np.isnan(fpr) or np.isnan(fnr)) else np.nan
 
-            # --- Update log_data ---
             log_data['val_loss'] = val_loss
             log_data['val_acc'] = accuracy
             log_data['val_auc'] = auc
