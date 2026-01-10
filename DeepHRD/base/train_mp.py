@@ -202,7 +202,7 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 
         logits, _, projected_features = model(input)
         probs = torch.softmax(logits, dim=1)
-        loss_cls = criterion(logits, targets)
+        loss_cls = criterion(logits, target)
 
         #loss_cls = criterion(logits, target)
 
