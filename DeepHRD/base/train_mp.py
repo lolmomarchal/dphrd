@@ -86,8 +86,8 @@ class SoftCrossEntropyLoss(nn.Module):
           y_loss = F.cross_entropy(input, target_temp, reduction="none")
           if self.weight is not None:
             y_loss = y_loss * self.weight[y]
-            cum_losses += target[:, y].float() * y_loss
-          return cum_losses.mean()
+          cum_losses += target[:, y].float() * y_loss
+        return cum_losses.mean()
 # for when there is a LARGE class dif
 class FocalLossWithProbs(nn.Module):
     def __init__(self, alpha=None, gamma=2.0, reduction="mean"):
