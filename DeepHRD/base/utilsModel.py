@@ -645,7 +645,7 @@ class MILdataset(data.Dataset):
 	        if num_available <= k:
 	            selected_tiles = sorted_tiles
 	        else:
-				selected_tiles = sorted_tiles[:k]
+	            selected_tiles = sorted_tiles[:k]
 
 	            # selected_tiles = sorted_tiles[:(k-1)]
 	            
