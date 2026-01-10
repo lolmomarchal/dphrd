@@ -85,7 +85,7 @@ class SoftCrossEntropyLoss(nn.Module):
           target_temp = input.new_full((num_points,), y, dtype=torch.long)
           y_loss = F.cross_entropy(input, target_temp, reduction="none")
           if self.weight is not None:
-            y_loss = y_loss * weight[y]
+            y_loss = y_loss * self.weight[y]
             cum_losses += target[:, y].float() * y_loss
           return cum_losses.mean()
 # for when there is a LARGE class dif
