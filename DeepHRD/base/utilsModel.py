@@ -645,14 +645,16 @@ class MILdataset(data.Dataset):
 	        if num_available <= k:
 	            selected_tiles = sorted_tiles
 	        else:
-	            selected_tiles = sorted_tiles[:(k-1)]
+				selected_tiles = sorted_tiles[:k]
+
+	            # selected_tiles = sorted_tiles[:(k-1)]
 	            
 	       
-	            pool_start = k - 1
-	            pool_end = min(pool_start + 15, num_available)
-	            random_pool = sorted_tiles[pool_start:pool_end]
+	            # pool_start = k - 1
+	            # pool_end = min(pool_start + 15, num_available)
+	            # random_pool = sorted_tiles[pool_start:pool_end]
 	            
-	            selected_tiles.append(random.choice(random_pool))
+	            # selected_tiles.append(random.choice(random_pool))
 	
 	        for tile_to_add in selected_tiles:
 	            self.t_data.append(
