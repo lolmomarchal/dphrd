@@ -278,6 +278,7 @@ def gatherData (files, svsPath, tilesPath):
 	data['slides'] = []
 	data['tiles'] = []
 	data['targets'] = []
+	data["softLabels"] = []
 	data["subtype"] = []
 
 	saveSamp = True
@@ -329,12 +330,14 @@ def gatherData (files, svsPath, tilesPath):
 			if sigExposure > SIG_CUTOFF:
 				countsPos += 1
 				print(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
-				data['targets'].append(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
+				data['softLabels'].append(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
+				data["targets"].append(sigExposure)
 				print("low")
 			elif sigExposure <= SIG_CUTOFF_LOWER:
 				countsNeg += 1
 				print(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
-				data['targets'].append(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
+				data['softLabels'].append(torch.tensor([1-sigExposureSoft, sigExposureSoft]))
+				data["targets"].append(sigExposure)
 				print("high")
 			else:
 				countsAmbig += 1

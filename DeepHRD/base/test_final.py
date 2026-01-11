@@ -122,24 +122,10 @@ def main ():
 
 		if args.dropoutRate == 0.0:
 			writeFeatureVectorsToFile(probs, features, modelNumber, dset)
-# 		print("\n--- DEBUG INFO ---")
-# 		print(f"Type of dset.slideIDX: {type(dset.slideIDX)}")
-# 		print(f"Length of dset.slideIDX: {len(dset.slideIDX)}")
-# 		print(f"Type of probs: {type(probs)}")
-# 		print(f"Length of probs: {len(probs)}")
-# 		print(f"Length of dset.targets: {len(dset.targets)}")
-# 		print("--------------------\n")
-
-		# Collects the maximum tile probability for each tissue slide and generates the final prediction label
 		maxs = ut.groupTopKtilesProbabilities(np.array(dset.slideIDX), probs, len(dset.targets))
 
-		# Collect the indeces for the k top tiles with the maximum predicted probabilites and their corresponding slide indeces and probabilities for each tissue slide
 		topk, topgroups, topProbs = ut.groupTopKtilesTesting(np.array(dset.slideIDX), probs, 25)
-
-		# Collects all tile probabilites for each slide
 		newProbs = [[y[0] for y in zip(topProbs, topgroups) if y[1]==x] for x in set(topgroups)]
-
-		# Average the top k tile probabilites and save for the current BN_rep
 		finalProbsK = [np.mean(y) for y in newProbs]
 		allProbs.append(finalProbsK)
 
