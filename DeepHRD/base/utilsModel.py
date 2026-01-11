@@ -585,7 +585,7 @@ class MILdataset(data.Dataset):
             raw_scores = np.array(lib['targets'])
 
             self.targets = (raw_scores / 100.0).tolist()
-            print(self.targets)
+            # print(self.targets)
             self.subtype = lib["subtype"]
             self.softLabels = lib["softLabels"]
             self.grid = grid
@@ -678,7 +678,7 @@ class MILdataset(data.Dataset):
                 print(f"[INFO] Sampling from base counts: {counts_to_log}")
             sampled_subtypes = [self.subtype[i] for i in shuffled_original_slide_ids]
             print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
-            sampled_targets = [1 if self.targets[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
+            sampled_targets = [1 if self.softLabels[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
             print(f"[INFO] Post-sampling target distribution: {Counter(sampled_targets)}")
 
 
