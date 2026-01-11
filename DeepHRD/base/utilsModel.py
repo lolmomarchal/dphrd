@@ -740,7 +740,7 @@ class MILdataset(data.Dataset):
         self.t_data = []
         for slide_id in unique_slide_ids:
             all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
-            sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[2], reverse=True)
+            sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[3], reverse=True)
 
             num_available = len(sorted_tiles)
             if num_available == 0:
