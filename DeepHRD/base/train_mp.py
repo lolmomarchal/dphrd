@@ -72,33 +72,22 @@ parser.add_argument('--train_inference_transforms_enabled', action='store_true',
 # ================ LOSS ======================
 
 class SoftCrossEntropyLoss(nn.Module):
-    """
-    Cross-entropy loss function that works with soft probability targets.
-    """
+ 
     def __init__(self, weight=None, reduction='mean'):
-        super(SoftCrossEntropyLoss, self).__init__()
-        self.weight = weight
+        super().__init__()
+        self.register_buffer('weight', weight)
         self.reduction = reduction
 
-    def forward(self, logits, targets):
-        log_probs = F.log_softmax(logits, dim=1)
-        loss = -(targets * log_probs)
-
-        if self.weight is not None:
-            weight = self.weight.to(logits.device).unsqueeze(0)
-            loss = loss * weight
-
-        # Sum over classes. Resulting 'loss' shape is (64)
-        loss = loss.sum(dim=1)
-
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        else:
-            return loss
-
-
+    def forward(self, input, target):
+        num_points, num_classes = input.shape
+        cum_losses = input.new_zeros(num_points)
+        for y in range(num_classes):
+          target_temp = input.new_full((num_points,), y, dtype=torch.long)
+          y_loss = F.cross_entropy(input, target_temp, reduction="none")
+          if self.weight is not None:
+            y_loss = y_loss * self.weight[y]
+          cum_losses += target[:, y].float() * y_loss
+        return cum_losses.mean()
 # for when there is a LARGE class dif
 class FocalLossWithProbs(nn.Module):
     def __init__(self, alpha=None, gamma=2.0, reduction="mean"):
@@ -212,7 +201,10 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
         total_samples += batch_size
 
         logits, _, projected_features = model(input)
+        probs = torch.softmax(logits, dim=1)
         loss_cls = criterion(logits, target)
+
+        #loss_cls = criterion(logits, target)
 
 
         inst_loss = torch.tensor(0.0, device=device)
@@ -489,7 +481,7 @@ def main():
             log_data['val_err'] = err
             log_data['val_fpr'] = fpr
             log_data['val_fnr'] = fnr
-            if err < best_val_loss:
+            if val_loss < best_val_loss:
                 best_val_loss = err
                 early_stop = 0
                 print(f"\n  ** New best validation loss: {best_val_loss:.6f} at epoch {epoch + 1}. Saving model. **")
