@@ -879,16 +879,17 @@ class MILdataset(data.Dataset):
     from collections import defaultdict
     from sklearn.cluster import MiniBatchKMeans
     # to start off -> force model to learn from diverse features (which includes making it learn from clusters rather than simply random)
-    def make_clustered_warmup_data(self, all_tile_probs, all_features, k_per_cluster=10, n_clusters=8):
-
-        # Group grid indices and features by slide
-        slide_to_data = defaultdict(lambda: {'indices': [], 'features': [], "probs":[]})
+    def make_clustered_warmup_data(self, all_tile_probs, all_features, percentile=0.10, n_clusters=8, min_k=1, max_k=20):
+        """
+        Dynamically selects the top percentage of tiles from each cluster based on probability.
+        Ensures morphological diversity while keeping sampling representative of cluster size.
+        """
+        slide_to_data = defaultdict(lambda: {'indices': [], 'features': [], 'probs': []})
         for i in range(len(self.epoch_tile_info)):
             grid_idx, slide_id = self.epoch_tile_info[i]
             slide_to_data[slide_id]['indices'].append(grid_idx)
             slide_to_data[slide_id]['features'].append(all_features[i])
             slide_to_data[slide_id]['probs'].append(all_tile_probs[i])
-
 
         self.t_data = []
         for slide_id, data_dict in slide_to_data.items():
@@ -896,13 +897,13 @@ class MILdataset(data.Dataset):
             indices = np.array(data_dict['indices'])
             probs = np.array(data_dict['probs'])
 
-            # 2. Phenotype Clustering: Capture different tissue types (TME, neoplastic, etc.)
+            # Phenotype Clustering
             n_c = min(n_clusters, len(indices))
             kmeans = MiniBatchKMeans(n_clusters=n_c, n_init=1, batch_size=256)
             labels = kmeans.fit_predict(feats)
 
-            target = self.epoch_target_map[slide_id]      # Normalized Continuous Score
-            soft_label = self.epoch_softlabel_map[slide_id] # [P_HRP, P_HRD]
+            target = self.epoch_target_map[slide_id]
+            soft_label = self.epoch_softlabel_map[slide_id]
 
             for c_id in range(n_c):
                 cluster_mask = (labels == c_id)
@@ -911,14 +912,16 @@ class MILdataset(data.Dataset):
                 c_indices = indices[cluster_mask]
                 c_probs = probs[cluster_mask]
 
-                # 3. Top-K Selection within Cluster: Pick the 'best' examples of this morphology
-                # This ensures we don't just pick random stroma, but the most relevant tiles
-                num_to_pick = min(k_per_cluster, len(c_indices))
-                top_k_in_cluster = np.argsort(c_probs)[-num_to_pick:] # Indices of highest probs
+                # DYNAMIC K: Take the top % of this cluster's size
+                # Clip between min_k and max_k to maintain computational efficiency
+                num_to_pick = int(len(c_indices) * percentile)
+                num_to_pick = max(min_k, min(num_to_pick, max_k))
 
-                selected_grid_idxs = c_indices[top_k_in_cluster]
+                # Sort and pick the top tiles for this cluster
+                top_indices = np.argsort(c_probs)[-num_to_pick:]
+                selected_grid_idxs = c_indices[top_indices]
 
                 for g_idx in selected_grid_idxs:
-                    # Add all necessary multi-task labels to the training bag
                     self.t_data.append((slide_id, self.grid[g_idx], target, soft_label))
-        print(f"[INFO] Clustered Warmup: Created training set with {len(self.t_data)} diverse tiles.")
+
+        print(f"[INFO] Adaptive Warmup: Created {len(self.t_data)} tiles using top {percentile*100}% per cluster.")

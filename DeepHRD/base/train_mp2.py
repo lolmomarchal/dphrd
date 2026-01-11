@@ -377,7 +377,7 @@ def main():
             num_workers=args.workers, pin_memory=pin_memory)
         probs, loss, features = inference(infer_loader,model, criterion, enable_dropout_flag=args.train_inference_dropout_enabled)
         if epoch< args.warmup_epochs:
-            train_dset.make_clustered_warmup_data(probs, features, k_per_cluster=15, n_clusters=8)
+            train_dset.make_clustered_warmup_data(probs, features)
         else:
             train_dset.maket_data(probs, args.k)
 
