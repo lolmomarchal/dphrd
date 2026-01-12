@@ -437,7 +437,7 @@ def main():
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss, features = inference(val_loader, model, criterion, enable_dropout_flag=False)
-            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), k = 25)
+            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), k = args.k)
 
             true_labels_tensors = val_dset.softLabels
             # true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])
