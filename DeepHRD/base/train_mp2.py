@@ -169,54 +169,64 @@ def enable_dropout(model):
         if m.__class__.__name__.startswith('Dropout'):
             m.train()
 
-def inference(loader, model, criterion, enable_dropout_flag = False):
+def inference(loader, model, criterion, enable_dropout_flag=False):
     model.eval()
     if len(loader.dataset) == 0:
-        print("[WARNING] Warning: Inference dataset is empty.")
-        return np.array([]), 0.0
+        print("[WARNING] Inference dataset is empty.")
+        return np.array([]), 0.0, np.array([])
+
     if enable_dropout_flag:
-        print("[INFO] inference is running with ENABLED dropout for top-k selection")
         enable_dropout(model)
 
     probs_list = []
     feature_list = []
-    running_loss = 0.0
+
+    # Tracking total and individual sub-losses
+    running_total_loss = 0.0
+    running_cls_loss = 0.0
+    running_mse_loss = 0.0
     total_samples = 0
+
     with torch.no_grad():
         for i, batch in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[INFERENCE]"):
-            input, target, softLabel, slide_ids = batch
+            input, target_score, soft_label, _ = batch
+            input = input.to(device, non_blocking=True)
+            target_score = target_score.to(device, non_blocking=True).float()
+            soft_label = soft_label.to(device, non_blocking=True).float()
 
-            input = input.to(device, non_blocking = True)
-            target = target.to(device, non_blocking = True)
-            softLabel =  softLabel.to(device, non_blocking = True)
+            # Combine into [P_HRP, P_HRD, Score]
+            combined_target = torch.cat([soft_label, target_score.unsqueeze(1)], dim=1).float()
             batch_size = input.size(0)
             total_samples += batch_size
-            # format: [P_HRP, P_HRD, HRD_Score]
-            combined_target = torch.cat([softLabel, target.unsqueeze(1)], dim=1).float()
+
             if device == "cuda":
-                with autocast(): #run with autocast bc we dont care as much about FP16 v FP32 for simple prediction
+                with torch.cuda.amp.autocast():
                     logits, hrd_score_pred, features = model(input)
-                    output = F.softmax(logits, dim=1)
-                    # doing combined loss
-                    loss, _, _ = criterion(logits, hrd_score_pred, combined_target)
+                    # Unpack the three values from your MultiTaskLoss
+                    loss_total, loss_cls, loss_mse = criterion(logits, hrd_score_pred, combined_target)
             else:
                 logits, hrd_score_pred, features = model(input)
+                loss_total, loss_cls, loss_mse = criterion(logits, hrd_score_pred, combined_target)
 
-                output = F.softmax(logits, dim=1)
-                loss, _, _ = criterion(logits, hrd_score_pred, combined_target)
-                print(loss)
+            # Accumulate scalars
+            running_total_loss += loss_total.item() * batch_size
+            running_cls_loss += loss_cls.item() * batch_size
+            running_mse_loss += loss_mse.item() * batch_size
 
-            running_loss += loss.item() * batch_size
-            probs_list.append(output.detach()[:, 1].clone().cpu())
-            feature_list.append(features.detach().clone().cpu())
+            probs_list.append(torch.nn.functional.softmax(logits, dim=1).detach()[:, 1].cpu())
+            feature_list.append(features.detach().cpu())
 
-    if total_samples == 0:
-        mean_loss = 0.0
-    else:
-        mean_loss = running_loss / total_samples
-    all_probs = torch.cat(probs_list, dim=0).numpy() if probs_list else np.array([])
-    all_features = torch.cat(feature_list, dim=0).numpy() if feature_list else np.array([])
-    return all_probs, mean_loss, all_features
+    # Calculate final means
+    mean_total = running_total_loss / total_samples
+    mean_cls = running_cls_loss / total_samples
+    mean_mse = running_mse_loss / total_samples
+
+    print(f"\n[INFERENCE SUMMARY] Total Loss: {mean_total:.4f} | Cls (CE): {mean_cls:.4f} | Reg (MSE): {mean_mse:.4f}")
+
+    all_probs = torch.cat(probs_list).numpy() if probs_list else np.array([])
+    all_features = torch.cat(feature_list).numpy() if feature_list else np.array([])
+
+    return all_probs, mean_total, all_features
 
 
 def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimizer, lambda_reg=0.2, device="cpu"):
@@ -268,7 +278,7 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 best_val_loss = np.inf
 
 def main():
-    torch.set_num_threads(1)
+    # torch.set_num_threads(1)
     global best_val_loss, device, args
     args = parser.parse_args()
     resolution = args.resolution
@@ -310,7 +320,7 @@ def main():
     cudnn.benchmark = True
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=3e-4,
+        lr=5e-5,
         weight_decay=1e-4
     )
 
@@ -427,7 +437,7 @@ def main():
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss, features = inference(val_loader, model, criterion, enable_dropout_flag=False)
-            maxs = ut.groupTopKtilesProbabilities(np.array(val_dset.slideIDX), probs, len(val_dset.targets))
+            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), k = 25)
 
             true_labels_tensors = val_dset.softLabels
             # true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])

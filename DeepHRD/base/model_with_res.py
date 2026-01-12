@@ -12,7 +12,7 @@ class ResNet_dropout(nn.Module):
         self.resnet = torchvision.models.resnet34(weights=ResNet34_Weights.IMAGENET1K_V1)
 
         for name, child in self.resnet.named_children():
-            if name in ['conv1', 'bn1', 'layer1', 'layer2']:
+            if name in ['conv1', 'bn1', 'layer1']:
                 for param in child.parameters():
                     param.requires_grad = False
             else:

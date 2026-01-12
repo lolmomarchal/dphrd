@@ -464,7 +464,30 @@ def groupTopKtiles(groups, data, k=1):
     index[:-k] = groups[k:] != groups[:-k]
     return (list(order[index]))
 
+def groupTopKtilesAverage(groups, data, nmax, k=25):
+    """
+    Calculates the average of the Top-K tiles for each slide.
+    This provides a robust slide-level score for AUC/Accuracy.
+    """
+    out = np.empty(nmax)
+    out[:] = np.nan
 
+    # Sort data by slide index (groups) and then by probability (data)
+    order = np.lexsort((data, groups))
+    groups = groups[order]
+    data = data[order]
+
+    unique_groups = np.unique(groups)
+
+    for g in unique_groups:
+        # Get all probabilities for this specific slide
+        slide_probs = data[groups == g]
+        # Take the top k (or fewer if the slide is small)
+        top_k = slide_probs[-min(k, len(slide_probs)):]
+        # Store the mean
+        out[g] = np.mean(top_k)
+
+    return out
 def groupTopKtilesProbabilities(groups, data, nmax):
     '''
     Function edited from (https_://github.com/MSKCC-Computational-Pathology/MIL-nature-medicine-2019).
