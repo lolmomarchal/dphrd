@@ -69,7 +69,7 @@ parser.add_argument('--train_inference_dropout_enabled', action='store_true',
                     help='Enable dropout for the inference step on the training set (top-k selection). Default is False.')
 parser.add_argument('--train_inference_transforms_enabled', action='store_true',
                     help='Apply training transforms (flipping, color jitter) during the inference step on the training set. Default is False.')
-parser.add_argument('--warmup_epochs', type=int, default=1,
+parser.add_argument('--warmup_epochs', type=int, default=10,
                     help='Number of initial epochs to train on random tiles instead of top-k.')
 parser.add_argument('--lambda_reg_mse', type=float, default=1.0,
                     help='Weight for the MSE regression loss.')
