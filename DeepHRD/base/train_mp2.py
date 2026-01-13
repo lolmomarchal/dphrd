@@ -337,20 +337,20 @@ def main():
     criterion = MultiTaskLoss(weight=class_weights, lambda_mse=args.lambda_reg_mse).to(device)
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     cudnn.benchmark = True
-    # optimizer = torch.optim.Adam([
-    #     {'params': model.resnet.layer4.parameters(), 'lr': 1e-5}, # Slow backbone
-    #     {'params': model.shared_neck.parameters(), 'lr': 5e-5},   # Fast neck
-    #     {'params': model.classifier.parameters(), 'lr': 5e-5},    # Fast heads
-    #     {'params': model.regression_head.parameters(), 'lr': 5e-5}
-    # ], weight_decay=1e-4)
-    unfreeze_stage = 0
-    patience_counter = 0
+    optimizer = torch.optim.Adam([
+        {'params': model.resnet.layer4.parameters(), 'lr': 1e-5}, # Slow backbone
+        {'params': model.shared_neck.parameters(), 'lr': 5e-5},   # Fast neck
+        {'params': model.classifier.parameters(), 'lr': 5e-5},    # Fast heads
+        {'params': model.regression_head.parameters(), 'lr': 5e-5}
+    ], weight_decay=1e-4)
+    # unfreeze_stage = 0
+    # patience_counter = 0
     best_val_loss = float('inf')
     warmup_done = False
 
     # Initialize at Stage 0
-    active_params = trigger_unfreeze(model, 0)
-    optimizer = torch.optim.Adam(active_params, lr=5e-5, weight_decay=1e-4)
+    # active_params = trigger_unfreeze(model, 0)
+    # optimizer = torch.optim.Adam(active_params, lr=5e-5, weight_decay=1e-4)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
@@ -524,13 +524,13 @@ def main():
 
         elif not args.val_lib:
             pass
-        if patience_counter >= 5 and unfreeze_stage < 2:
-            unfreeze_stage += 1
-            active_params = trigger_unfreeze(model, unfreeze_stage)
-
-            optimizer = torch.optim.Adam(active_params, lr=1e-5, weight_decay=1e-4)
-            patience_counter = 0
-            print(f"--- Optimizer reset at stage {unfreeze_stage} with lower LR ---")
+        # if patience_counter >= 5 and unfreeze_stage < 2:
+        #     unfreeze_stage += 1
+        #     active_params = trigger_unfreeze(model, unfreeze_stage)
+        #
+        #     optimizer = torch.optim.Adam(active_params, lr=1e-5, weight_decay=1e-4)
+        #     patience_counter = 0
+        #     print(f"--- Optimizer reset at stage {unfreeze_stage} with lower LR ---")
         with open(log_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([

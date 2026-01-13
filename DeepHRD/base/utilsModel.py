@@ -902,7 +902,7 @@ class MILdataset(data.Dataset):
     from collections import defaultdict
     from sklearn.cluster import MiniBatchKMeans
     # to start off -> force model to learn from diverse features (which includes making it learn from clusters rather than simply random)
-    def make_clustered_warmup_data(self, all_tile_probs, all_features, percentile=0.10, n_clusters=8, min_k=1, max_k=20):
+    def make_clustered_warmup_data(self, all_tile_probs, all_features, percentile=0.05, n_clusters=8, min_k=1, max_k=20):
         """
         Dynamically selects the top percentage of tiles from each cluster based on probability.
         Ensures morphological diversity while keeping sampling representative of cluster size.
@@ -935,12 +935,8 @@ class MILdataset(data.Dataset):
                 c_indices = indices[cluster_mask]
                 c_probs = probs[cluster_mask]
 
-                # DYNAMIC K: Take the top % of this cluster's size
-                # Clip between min_k and max_k to maintain computational efficiency
                 num_to_pick = int(len(c_indices) * percentile)
                 num_to_pick = max(min_k, min(num_to_pick, max_k))
-
-                # Sort and pick the top tiles for this cluster
                 top_indices = np.argsort(c_probs)[-num_to_pick:]
                 selected_grid_idxs = c_indices[top_indices]
 
