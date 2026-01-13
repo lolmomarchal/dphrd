@@ -242,6 +242,9 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
         print(f"[EPOCH {run}] Warning: Training dataset is empty. Skipping train step.")
         return 0.0, 0.0
     for i, (input, target, softLabel, slide_ids) in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[TRAINING]"):
+        if input.size(0) <= 1:
+            print("skipping batch, only 1 item")
+            continue
         input = input.to(device, non_blocking= True )
         target = target.to(device, non_blocking= True )
         softLabel = softLabel.to(device, non_blocking= True)
