@@ -276,6 +276,25 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 
 # ================= TRAIN LOOP ==================
 best_val_loss = np.inf
+def trigger_unfreeze(model, stage):
+    if stage == 0:
+        # Initial: Everything in ResNet frozen
+        for param in model.resnet.parameters():
+            param.requires_grad = False
+        status = "WARMUP (Backbone Frozen)"
+    elif stage == 1:
+        # Unfreeze Layer 4
+        for param in model.resnet.layer4.parameters():
+            param.requires_grad = True
+        status = "ADAPTIVE: Layer 4 Unfrozen"
+    elif stage == 2:
+        # Unfreeze Layer 3
+        for param in model.resnet.layer3.parameters():
+            param.requires_grad = True
+        status = "ADAPTIVE: Layer 3 Unfrozen"
+
+    print(f"\n[TRIGGER] {status}")
+    return [p for p in model.parameters() if p.requires_grad]
 
 def main():
     # torch.set_num_threads(1)
@@ -318,11 +337,20 @@ def main():
     criterion = MultiTaskLoss(weight=class_weights, lambda_mse=args.lambda_reg_mse).to(device)
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     cudnn.benchmark = True
-    optimizer = torch.optim.Adam(
-        model.parameters(),
-        lr=5e-5,
-        weight_decay=1e-4
-    )
+    # optimizer = torch.optim.Adam([
+    #     {'params': model.resnet.layer4.parameters(), 'lr': 1e-5}, # Slow backbone
+    #     {'params': model.shared_neck.parameters(), 'lr': 5e-5},   # Fast neck
+    #     {'params': model.classifier.parameters(), 'lr': 5e-5},    # Fast heads
+    #     {'params': model.regression_head.parameters(), 'lr': 5e-5}
+    # ], weight_decay=1e-4)
+    unfreeze_stage = 0
+    patience_counter = 0
+    best_val_loss = float('inf')
+    warmup_done = False
+
+    # Initialize at Stage 0
+    active_params = trigger_unfreeze(model, 0)
+    optimizer = torch.optim.Adam(active_params, lr=5e-5, weight_decay=1e-4)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
@@ -372,6 +400,7 @@ def main():
             'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr'
         ])
     early_stop = 0
+
     for epoch in tqdm.tqdm(range(args.epochs), total=args.epochs):
         if early_stop == args.patience:
             print(f"[INFO]: STOPPED AT EPOCH {epoch + 1} AFTER {args.patience} EPOCHS OF NO IMPROVEMENT")
@@ -437,7 +466,7 @@ def main():
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss, features = inference(val_loader, model, criterion, enable_dropout_flag=False)
-            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), k = args.k)
+            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), k = 25)
 
             true_labels_tensors = val_dset.softLabels
             # true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])
@@ -471,6 +500,7 @@ def main():
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
                 early_stop = 0
+                patience_counter = 0
                 print(f"\n  ** New best validation loss: {best_val_loss:.6f} at epoch {epoch + 1}. Saving model. **")
                 obj = {
                     'epoch': epoch + 1,
@@ -482,6 +512,7 @@ def main():
                 torch.save(obj, save_path)
             else:
                 early_stop += 1
+                patience_counter +=1
                 obj = {
                     'epoch': epoch + 1,
                     'state_dict': model.state_dict(),
@@ -493,6 +524,13 @@ def main():
 
         elif not args.val_lib:
             pass
+        if patience_counter >= 5 and unfreeze_stage < 2:
+            unfreeze_stage += 1
+            active_params = trigger_unfreeze(model, unfreeze_stage)
+
+            optimizer = torch.optim.Adam(active_params, lr=1e-5, weight_decay=1e-4)
+            patience_counter = 0
+            print(f"--- Optimizer reset at stage {unfreeze_stage} with lower LR ---")
         with open(log_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
