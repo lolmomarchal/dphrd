@@ -509,7 +509,7 @@ def main():
             'val_fpr': np.nan,
             'val_fnr': np.nan,
             's_cls': np.nan, 's_reg': np.nan,
-            "SAVED": np.nan
+            "SAVED": ""
         }
         # iii. inference on validation
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
@@ -597,7 +597,7 @@ def main():
                 f"{log_data['val_fnr']:.6f}" if not np.isnan(log_data['val_fnr']) else '',
                 f"{log_data['s_cls']:.6f}" if not np.isnan(log_data['s_cls']) else '',
                 f"{log_data['s_reg']:.6f}" if not np.isnan(log_data['s_reg']) else '',
-                f"{log_data['SAVED']}" if not np.isnan(log_data['SAVED']) else '',
+                f"{log_data['SAVED']}" ,
 
 
 
