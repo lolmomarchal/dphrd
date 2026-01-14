@@ -76,33 +76,34 @@ parser.add_argument('--lambda_reg_mse', type=float, default=1.0,
 # ================ LOSS ======================
 
 class SoftCrossEntropyLoss(nn.Module):
-    """
-    Cross-entropy loss function that works with soft probability targets.
-    """
-    def __init__(self, weight=None, reduction='mean'):
+    def __init__(self, weight=None, reduction='mean', smoothing=0.1):
         super(SoftCrossEntropyLoss, self).__init__()
         self.weight = weight
         self.reduction = reduction
+        self.smoothing = smoothing
 
     def forward(self, logits, targets):
+        # targets: [P_HRP, P_HRD]
+        if self.smoothing > 0:
+            # Shift targets towards a uniform distribution (0.5, 0.5)
+            targets = targets * (1.0 - self.smoothing) + 0.5 * self.smoothing
+
         log_probs = F.log_softmax(logits, dim=1)
         loss = -(targets * log_probs)
 
         if self.weight is not None:
+            # Apply class weights to the HRP/HRD loss
+            # We pick the weight based on the dominant class
             weight = self.weight.to(logits.device).unsqueeze(0)
             loss = loss * weight
 
-        # Sum over classes. Resulting 'loss' shape is (64)
         loss = loss.sum(dim=1)
 
         if self.reduction == 'mean':
             return loss.mean()
         elif self.reduction == 'sum':
             return loss.sum()
-        else:
-            return loss
-
-
+        return loss
 # for when there is a LARGE class dif
 class FocalLossWithProbs(nn.Module):
     def __init__(self, alpha=None, gamma=2.0, reduction="mean"):
@@ -135,26 +136,34 @@ class FocalLossWithProbs(nn.Module):
         else:
             raise ValueError(f"Invalid reduction: {self.reduction}")
 class UncertaintyMultiTaskLoss(nn.Module):
-    def __init__(self, weight=None):
+    def __init__(self, weight=None, smoothing=0.1):
         super().__init__()
-        self.classification_criterion = SoftCrossEntropyLoss(weight=weight)
+        # Pass smoothing to the classification criterion
+        self.classification_criterion = SoftCrossEntropyLoss(weight=weight, smoothing=smoothing)
         self.regression_criterion = nn.MSELoss()
+
+        # Learnable log-variance parameters
         self.log_var_cls = nn.Parameter(torch.zeros(1))
         self.log_var_reg = nn.Parameter(torch.zeros(1))
 
     def forward(self, logits, hrd_score_pred, targets):
+        # targets: [P_HRP, P_HRD, Continuous_Score]
         loss_cls = self.classification_criterion(logits, targets[:, :2])
         loss_reg = self.regression_criterion(hrd_score_pred, targets[:, 2].unsqueeze(1))
 
-        # Precision-weighted loss
+        # Precision calculation with clamping for the regression task
         prec_cls = torch.exp(-self.log_var_cls)
-        prec_reg = torch.exp(-self.log_var_reg)
 
+        # Limit s_reg to ~7.4 to ensure it doesn't drown out the cls gradients
+        log_var_reg_clamped = torch.clamp(self.log_var_reg, min=-2.0)
+        prec_reg = torch.exp(-log_var_reg_clamped)
+
+        # Weighted combination
+        # The penalty terms use the variables, but we use the clamped version for reg
         total_loss = (prec_cls * loss_cls + self.log_var_cls) + \
-                     (prec_reg * loss_reg + self.log_var_reg)
+                     (prec_reg * loss_reg + log_var_reg_clamped)
+
         return total_loss, loss_cls, loss_reg
-
-
 
 
 # ================= EVAL AND TRAIN METHODS =================================================
@@ -298,9 +307,9 @@ def get_optim_and_sched(model, criterion, stage, total_epochs):
     params = set_trainable_layers(model, stage)
     # Add loss parameters so they actually learn!
     optimizer = torch.optim.AdamW([
-        {'params': params, 'lr': 1e-4 if stage == 0 else (5e-5 if stage == 1 else 1e-5)},
+        {'params': params, 'lr': 1e-4 if stage == 0 else (2e-5 if stage == 1 else 5e-6)},
         {'params': criterion.parameters(), 'lr': 1e-3} # Loss learns slightly faster
-    ], weight_decay=1e-2)
+    ], weight_decay=5e-2)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=total_epochs, eta_min=1e-6
@@ -354,7 +363,7 @@ def main():
 
     # Initialize at Stage 0
     trainable_params = set_trainable_layers(model, stage=0)
-    optimizer = torch.optim.AdamW(trainable_params, lr=1e-4, weight_decay=1e-2)
+    optimizer = torch.optim.AdamW(trainable_params, lr=1e-4, weight_decay=5e-2)
     current_stage = 0
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
