@@ -464,27 +464,28 @@ def groupTopKtiles(groups, data, k=1):
     index[:-k] = groups[k:] != groups[:-k]
     return (list(order[index]))
 
-def groupTopKtilesAverage(groups, data, nmax, k=25):
+def groupTopKtilesAverage(groups, data, nmax, percentile=0.05, min_k=5, max_k=15):
     """
-    Calculates the average of the Top-K tiles for each slide.
-    This provides a robust slide-level score for AUC/Accuracy.
+    Calculates an adaptive Top-K mean.
+    Ideal for 5x where tile area is large.
     """
     out = np.empty(nmax)
     out[:] = np.nan
-
-    # Sort data by slide index (groups) and then by probability (data)
-    order = np.lexsort((data, groups))
-    groups = groups[order]
-    data = data[order]
 
     unique_groups = np.unique(groups)
 
     for g in unique_groups:
         # Get all probabilities for this specific slide
         slide_probs = data[groups == g]
-        # Take the top k (or fewer if the slide is small)
-        top_k = slide_probs[-min(k, len(slide_probs)):]
-        # Store the mean
+        n_tiles = len(slide_probs)
+
+        k = int(n_tiles * percentile)
+
+        k = max(min_k, min(k, max_k))
+
+        k = min(k, n_tiles)
+
+        top_k = np.sort(slide_probs)[-k:]
         out[g] = np.mean(top_k)
 
     return out
@@ -733,65 +734,55 @@ class MILdataset(data.Dataset):
                 new_epoch_slide_id = self.epoch_slide_id_map[original_slide_id]
                 self.epoch_tile_info.append((i, new_epoch_slide_id))
 
-        print(
-            f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
+        print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
+    def maket_data(self, all_tile_probs, percentile=0.05, min_k=5, max_k=15):
+        """
+        Robust adaptive selection that handles repeated slides from sampling.
+        """
+        # 1. Group tile indices by their position in the CURRENT epoch
+        # We use the unique index 'i' to handle slides that appear multiple times
+        instance_to_tiles = defaultdict(list)
 
-    def maket_data(self, all_tile_probs, k):
-        slide_to_all_tiles = defaultdict(list)
-        if len(self.epoch_tile_info) != len(all_tile_probs):
-            print(
-                f"[ERROR] maket_data: Mismatch! Have {len(self.epoch_tile_info)} tiles in epoch info but {len(all_tile_probs)} probs. Aborting.")
-            self.t_data = []
-            return
+        for i in range(len(self.epoch_tile_info)):
+            # original_grid_index links to the actual image
+            # slide_instance_id is the ID for THIS specific occurrence in the epoch
+            original_grid_index, slide_instance_id = self.epoch_tile_info[i]
 
-        for i in range(len(all_tile_probs)):
-            original_grid_index, new_epoch_slide_id = self.epoch_tile_info[i]
-            slide_id = new_epoch_slide_id
-            # for each tile need to give tile path, target, softLabel, prob subtype
-            tile_data = (
-                self.grid[original_grid_index],  # 0: tile_path
-                self.epoch_target_map[slide_id],# 1: target
-                self.epoch_softlabel_map[slide_id], # 2: softLabel
-                all_tile_probs[i],  # 3: prob
-                self.epoch_subtype_map[slide_id]  # 4: subtype
-            )
-            slide_to_all_tiles[slide_id].append(tile_data)
-
-        unique_slide_ids = list(slide_to_all_tiles.keys())
-        random.shuffle(unique_slide_ids)
+            instance_to_tiles[slide_instance_id].append({
+                'grid_idx': original_grid_index,
+                'prob': all_tile_probs[i]
+            })
 
         self.t_data = []
-        for slide_id in unique_slide_ids:
-            all_tiles_for_this_slide = slide_to_all_tiles[slide_id]
-            sorted_tiles = sorted(all_tiles_for_this_slide, key=lambda t: t[3], reverse=True)
 
+        # 2. Iterate through each unique instance in the epoch
+        for instance_id, tiles in instance_to_tiles.items():
+            # Sort tiles of this instance by probability
+            sorted_tiles = sorted(tiles, key=lambda x: x['prob'], reverse=True)
             num_available = len(sorted_tiles)
-            if num_available == 0:
-                continue
 
-            selected_tiles = []
+            # Adaptive K logic
+            k = int(num_available * percentile)
+            k = max(min_k, min(k, max_k))
+            k = min(k, num_available)
 
-            if num_available <= k:
-                selected_tiles = sorted_tiles
-            else:
-                selected_tiles = sorted_tiles[:(k - 1)]
+            selected_tiles = sorted_tiles[:k]
 
-                pool_start = k - 1
-                pool_end = min(pool_start + 15, num_available)
-                random_pool = sorted_tiles[pool_start:pool_end]
+            # Retrieve metadata using the instance_id
+            target = self.epoch_target_map[instance_id]
+            soft_label = self.epoch_softlabel_map[instance_id]
 
-                selected_tiles.append(random.choice(random_pool))
+            for t in selected_tiles:
+                # We store: (instance_id, tile_path, target, soft_label)
+                self.t_data.append((
+                    instance_id,
+                    self.grid[t['grid_idx']],
+                    target,
+                    soft_label
+                ))
 
-            for tile_to_add in selected_tiles:
-                self.t_data.append(
-                    (
-                        slide_id,  # new epoch ID
-                        tile_to_add[0],  # tile_path
-                        tile_to_add[1], # target
-                        tile_to_add[2]  # softlabel
-                    )
-                )
-
+        # Shuffle so batches aren't dominated by a single slide
+        random.shuffle(self.t_data)
     def maketraindata(self, idxs):
         slide_to_tiles = defaultdict(list)
         for x in idxs:

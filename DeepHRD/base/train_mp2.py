@@ -134,31 +134,25 @@ class FocalLossWithProbs(nn.Module):
             return loss.sum()
         else:
             raise ValueError(f"Invalid reduction: {self.reduction}")
-
-class MultiTaskLoss(nn.Module):
-    def __init__(self, weight=None, reduction='mean', lambda_mse=1.0):
-        super(MultiTaskLoss, self).__init__()
-        self.classification_criterion = SoftCrossEntropyLoss(weight=weight, reduction=reduction)
-        self.regression_criterion = nn.MSELoss(reduction=reduction)
-        self.lambda_mse = lambda_mse
+class UncertaintyMultiTaskLoss(nn.Module):
+    def __init__(self, weight=None):
+        super().__init__()
+        self.classification_criterion = SoftCrossEntropyLoss(weight=weight)
+        self.regression_criterion = nn.MSELoss()
+        self.log_var_cls = nn.Parameter(torch.zeros(1))
+        self.log_var_reg = nn.Parameter(torch.zeros(1))
 
     def forward(self, logits, hrd_score_pred, targets):
-        """
-        targets: should contain soft labels in the first two columns [P_HRP, P_HRD]
-                 and the normalized continuous HRD score in the third column.
-        """
-        soft_targets = targets[:, :2]
-        loss_cls = self.classification_criterion(logits, soft_targets)
+        loss_cls = self.classification_criterion(logits, targets[:, :2])
+        loss_reg = self.regression_criterion(hrd_score_pred, targets[:, 2].unsqueeze(1))
 
-        # Task 2: Regression (Continuous Score)
-        hrd_score_gt = targets[:, 2].unsqueeze(1)
-        loss_mse = self.regression_criterion(hrd_score_pred, hrd_score_gt)
+        # Precision-weighted loss
+        prec_cls = torch.exp(-self.log_var_cls)
+        prec_reg = torch.exp(-self.log_var_reg)
 
-        # Combined Loss
-        total_loss = loss_cls + (self.lambda_mse * loss_mse)
-
-        return total_loss, loss_cls, loss_mse
-
+        total_loss = (prec_cls * loss_cls + self.log_var_cls) + \
+                     (prec_reg * loss_reg + self.log_var_reg)
+        return total_loss, loss_cls, loss_reg
 
 
 
@@ -261,8 +255,8 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 
         running_loss += loss.item() * batch_size
         del input, target, softLabel, combined_target # do not remove unless you want computer to crash
-        gc.collect()
-        torch.cuda.empty_cache()
+        # gc.collect()
+        # torch.cuda.empty_cache()
 
     if total_samples == 0:
         epoch_loss = 0.0
@@ -279,26 +273,39 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 
 # ================= TRAIN LOOP ==================
 best_val_loss = np.inf
-def trigger_unfreeze(model, stage):
-    if stage == 0:
-        # Initial: Everything in ResNet frozen
-        for param in model.resnet.parameters():
-            param.requires_grad = False
-        status = "WARMUP (Backbone Frozen)"
-    elif stage == 1:
-        # Unfreeze Layer 4
-        for param in model.resnet.layer4.parameters():
-            param.requires_grad = True
-        status = "ADAPTIVE: Layer 4 Unfrozen"
-    elif stage == 2:
-        # Unfreeze Layer 3
-        for param in model.resnet.layer3.parameters():
-            param.requires_grad = True
-        status = "ADAPTIVE: Layer 3 Unfrozen"
+def set_trainable_layers(model, stage):
+    """
+    Stage 0: Heads & Neck only (Warmup)
+    Stage 1: Stage 0 + ResNet Layer 4
+    Stage 2: Everything unfrozen
+    """
+    # First, freeze everything
+    for param in model.parameters():
+        param.requires_grad = False
 
-    print(f"\n[TRIGGER] {status}")
+    # Always keep heads/neck unfrozen
+    for param in model.shared_neck.parameters(): param.requires_grad = True
+    for param in model.classifier.parameters(): param.requires_grad = True
+    for param in model.regression_head.parameters(): param.requires_grad = True
+
+    if stage >= 1:
+        for param in model.resnet.layer4.parameters(): param.requires_grad = True
+    if stage >= 2:
+        for param in model.resnet.parameters(): param.requires_grad = True
+
     return [p for p in model.parameters() if p.requires_grad]
+def get_optim_and_sched(model, criterion, stage, total_epochs):
+    params = set_trainable_layers(model, stage)
+    # Add loss parameters so they actually learn!
+    optimizer = torch.optim.AdamW([
+        {'params': params, 'lr': 1e-4 if stage == 0 else (5e-5 if stage == 1 else 1e-5)},
+        {'params': criterion.parameters(), 'lr': 1e-3} # Loss learns slightly faster
+    ], weight_decay=1e-2)
 
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=total_epochs, eta_min=1e-6
+    )
+    return optimizer, scheduler
 def main():
     # torch.set_num_threads(1)
     global best_val_loss, device, args
@@ -337,23 +344,18 @@ def main():
         model.load_state_dict(torch.load(args.checkpoint)["state_dict"])
     model.to(device)
     # 4. Initiate criterion, optimizer
-    criterion = MultiTaskLoss(weight=class_weights, lambda_mse=args.lambda_reg_mse).to(device)
+    criterion = UncertaintyMultiTaskLoss(weight=class_weights).to(device)
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     cudnn.benchmark = True
-    optimizer = torch.optim.Adam([
-        {'params': model.resnet.layer4.parameters(), 'lr': 1e-5}, # Slow backbone
-        {'params': model.shared_neck.parameters(), 'lr': 5e-5},   # Fast neck
-        {'params': model.classifier.parameters(), 'lr': 5e-5},    # Fast heads
-        {'params': model.regression_head.parameters(), 'lr': 5e-5}
-    ], weight_decay=1e-4)
-    # unfreeze_stage = 0
-    # patience_counter = 0
+
+
     best_val_loss = float('inf')
     warmup_done = False
 
     # Initialize at Stage 0
-    # active_params = trigger_unfreeze(model, 0)
-    # optimizer = torch.optim.Adam(active_params, lr=5e-5, weight_decay=1e-4)
+    trainable_params = set_trainable_layers(model, stage=0)
+    optimizer = torch.optim.AdamW(trainable_params, lr=1e-4, weight_decay=1e-2)
+    current_stage = 0
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer,
@@ -361,7 +363,7 @@ def main():
         eta_min=1e-6
     )
 
-    normalize = transforms.Normalize(mean=[0.485, 0.406, 0.406], std=[0.229, 0.224, 0.225])
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     trans = transforms.Compose([
         transforms.RandomHorizontalFlip(),
         transforms.RandomVerticalFlip(),
@@ -399,8 +401,8 @@ def main():
     with open(log_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow([
-            'epoch', 'train_loss', 'train_inst_loss', 'val_loss', 'val_acc',
-            'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr'
+            'epoch', 'train_loss', 'train_auc', 'train_acc', 'train_f1', 'val_loss', 'val_acc',
+            'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr','s_cls', 's_reg', "SAVED"
         ])
     early_stop = 0
 
@@ -408,6 +410,15 @@ def main():
         if early_stop == args.patience:
             print(f"[INFO]: STOPPED AT EPOCH {epoch + 1} AFTER {args.patience} EPOCHS OF NO IMPROVEMENT")
             break
+        new_stage = current_stage
+        if epoch == args.warmup_epochs:
+            new_stage = 1
+        elif epoch == (args.warmup_epochs + 20) and current_stage == 1:
+            new_stage = 2
+        if new_stage != current_stage:
+            current_stage = new_stage
+            print(f"\n>>> Transitioning to Stage {current_stage}")
+            optimizer, scheduler = get_optim_and_sched(model, criterion, current_stage, args.epochs - epoch)
 
         # i. make sure that inference is evaluated BY the warmup
         train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode)
@@ -418,10 +429,41 @@ def main():
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=pin_memory)
         probs, loss, features = inference(infer_loader,model, criterion, enable_dropout_flag=args.train_inference_dropout_enabled)
+
+                # These correspond 1-to-1 with the 'probs' returned by inference
+        epoch_slide_ids = np.array([x[1] for x in train_dset.epoch_tile_info])
+
+        # 2. Get the number of unique slide instances in this epoch
+        num_epoch_slides = len(train_dset.epoch_slide_id_map)
+
+        # 3. Calculate slide predictions using the epoch-specific IDs
+        train_slide_preds = ut.groupTopKtilesAverage(
+            epoch_slide_ids, # Corrected from train_dset.slideIDX
+            probs,
+            num_epoch_slides, # Corrected from len(train_dset.targets)
+            percentile=0.05,
+            min_k=5,
+            max_k=15
+        )
+
+        # 4. Correctly align the true labels with the epoch slide IDs
+        # We use epoch_softlabel_map because it maps the new_id to the correct label
+        train_true_labels = np.array([
+            1 if train_dset.epoch_softlabel_map[i][1] >= 0.5 else 0
+            for i in range(num_epoch_slides)
+        ])
+
+        train_pred_binary = np.array([1 if x >= 0.5 else 0 for x in train_slide_preds])
+
+        # Now metrics calculation will work without IndexError
+        train_auc = roc_auc_score(train_true_labels, train_slide_preds)
+        train_acc = accuracy_score(train_true_labels, train_pred_binary)
+        train_f1 = f1_score(train_true_labels, train_pred_binary)
+
         if epoch< args.warmup_epochs:
             train_dset.make_clustered_warmup_data(probs, features)
         else:
-            train_dset.maket_data(probs, args.k)
+            train_dset.maket_data(probs, percentile=0.05, min_k=5, max_k=15)
 
         # ii. start with training based on top instances
 
@@ -456,20 +498,24 @@ def main():
         log_data = {
             'epoch': epoch + 1,
             'train_loss': train_loss,
-            'train_inst_loss': train_inst_loss,
+            "train_auc": train_auc,
+            "train_acc": train_acc,
+            "train_f1": train_f1,
             'val_loss': np.nan,
             'val_acc': np.nan,
             'val_auc': np.nan,
             'val_f1': np.nan,
             'val_err': np.nan,
             'val_fpr': np.nan,
-            'val_fnr': np.nan
+            'val_fnr': np.nan,
+            's_cls': np.nan, 's_reg': np.nan,
+            "SAVED": np.nan
         }
         # iii. inference on validation
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss, features = inference(val_loader, model, criterion, enable_dropout_flag=False)
-            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), k = args.k)
+            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), percentile=0.05, min_k=5, max_k=15)
 
             true_labels_tensors = val_dset.softLabels
             # true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])
@@ -513,6 +559,8 @@ def main():
                 }
                 save_path = os.path.join(args.output, f'checkpoint_best_{args.resolution}_epoch_{epoch + 1}.pth')
                 torch.save(obj, save_path)
+                log_data['SAVED'] = "YES"
+
             else:
                 early_stop += 1
                 patience_counter +=1
@@ -527,26 +575,32 @@ def main():
 
         elif not args.val_lib:
             pass
-        # if patience_counter >= 5 and unfreeze_stage < 2:
-        #     unfreeze_stage += 1
-        #     active_params = trigger_unfreeze(model, unfreeze_stage)
-        #
-        #     optimizer = torch.optim.Adam(active_params, lr=1e-5, weight_decay=1e-4)
-        #     patience_counter = 0
-        #     print(f"--- Optimizer reset at stage {unfreeze_stage} with lower LR ---")
+        with torch.no_grad():
+            s_cls = torch.exp(-criterion.log_var_cls).item() # "Precision" for classification
+            s_reg = torch.exp(-criterion.log_var_reg).item() # "Precision" for regression
+        log_data['s_cls'] = s_cls
+        log_data['s_reg'] = s_reg
         with open(log_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
                 log_data['epoch'],
                 f"{log_data['train_loss']:.6f}",
-                f"{log_data['train_inst_loss']:.6f}",
+                f"{log_data['train_auc']:.6f}",
+                f"{log_data['train_acc']:.6f}",
+                f"{log_data['train_f1']:.6f}",
                 f"{log_data['val_loss']:.6f}" if not np.isnan(log_data['val_loss']) else '',
                 f"{log_data['val_acc']:.6f}" if not np.isnan(log_data['val_acc']) else '',
                 f"{log_data['val_auc']:.6f}" if not np.isnan(log_data['val_auc']) else '',
                 f"{log_data['val_f1']:.6f}" if not np.isnan(log_data['val_auc']) else '',
                 f"{log_data['val_err']:.6f}" if not np.isnan(log_data['val_err']) else '',
                 f"{log_data['val_fpr']:.6f}" if not np.isnan(log_data['val_fpr']) else '',
-                f"{log_data['val_fnr']:.6f}" if not np.isnan(log_data['val_fnr']) else ''
+                f"{log_data['val_fnr']:.6f}" if not np.isnan(log_data['val_fnr']) else '',
+                f"{log_data['s_cls']:.6f}" if not np.isnan(log_data['s_cls']) else '',
+                f"{log_data['s_reg']:.6f}" if not np.isnan(log_data['s_reg']) else '',
+                f"{log_data['SAVED']:.6f}" if not np.isnan(log_data['SAVED']) else '',
+
+
+
             ])
 
 

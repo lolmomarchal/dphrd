@@ -7,7 +7,7 @@ from torchvision.models import ResNet34_Weights
 class ResNet_dropout(nn.Module):
     def __init__(self, dropoutRate=0.5):
         super(ResNet_dropout, self).__init__()
-        self.resnet = torchvision.models.resnet34(weights=ResNet34_Weights.IMAGENET1K_V1)
+        self.resnet = torchvision.models.resnet34(weights=ResNet34_Weights.DEFAULT)
         in_features = self.resnet.fc.in_features
         self.resnet.fc = nn.Identity()
 
