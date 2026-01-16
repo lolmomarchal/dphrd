@@ -307,9 +307,11 @@ def get_optim_and_sched(model, criterion, stage, total_epochs):
     params = set_trainable_layers(model, stage)
     # Add loss parameters so they actually learn!
     optimizer = torch.optim.AdamW([
-        {'params': params, 'lr': 1e-4 if stage == 0 else (2e-5 if stage == 1 else 5e-6)},
+        {'params': params, 'lr': 1e-4 },
+
+        # {'params': params, 'lr': 1e-4 if stage == 0 else (2e-5 if stage == 1 else 5e-6)},
         {'params': criterion.parameters(), 'lr': 1e-3} # Loss learns slightly faster
-    ], weight_decay=5e-2)
+    ], weight_decay=1e-3)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=total_epochs, eta_min=1e-6
@@ -362,7 +364,7 @@ def main():
     warmup_done = False
 
     # Initialize at Stage 0
-    trainable_params = set_trainable_layers(model, stage=0)
+    trainable_params = set_trainable_layers(model, stage=2)
     optimizer = torch.optim.AdamW(trainable_params, lr=1e-4, weight_decay=5e-2)
     current_stage = 0
 
@@ -380,12 +382,13 @@ def main():
 
         transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
         transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05, hue=0.02),
-
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         normalize
     ])
 
     infer_trans = transforms.Compose([
+        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         normalize
     ])
@@ -427,7 +430,7 @@ def main():
         if new_stage != current_stage:
             current_stage = new_stage
             print(f"\n>>> Transitioning to Stage {current_stage}")
-            optimizer, scheduler = get_optim_and_sched(model, criterion, current_stage, args.epochs - epoch)
+            # optimizer, scheduler = get_optim_and_sched(model, criterion, current_stage, args.epochs - epoch)
 
         # i. make sure that inference is evaluated BY the warmup
         train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode)
@@ -472,7 +475,7 @@ def main():
         if epoch< args.warmup_epochs:
             train_dset.make_clustered_warmup_data(probs, features)
         else:
-            train_dset.maket_data(probs, percentile=0.05, min_k=5, max_k=15)
+            train_dset.maket_data(probs, percentile=0.1, min_k=1, max_k=15)
 
         # ii. start with training based on top instances
 
@@ -524,7 +527,7 @@ def main():
         if (epoch + 1) % args.validation_interval == 0 and args.val_lib:
             val_dset.modelState(1)
             probs, val_loss, features = inference(val_loader, model, criterion, enable_dropout_flag=False)
-            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), percentile=0.05, min_k=5, max_k=15)
+            maxs = ut.groupTopKtilesAverage(np.array(val_dset.slideIDX), probs, len(val_dset.targets), percentile=0.1, min_k=1, max_k=15)
 
             true_labels_tensors = val_dset.softLabels
             # true_labels_1d = np.array([torch.argmax(t).item() for t in true_labels_tensors])

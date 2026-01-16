@@ -208,10 +208,9 @@ def generateFeatureVectorsUsingBestModels(i, iModels, project, projectPath, pyth
                                                 "feature_vectors.tsv") + " " + os.path.join(outputPath,
                                                                                             "training_m" + str(
                                                                                                 currentModel + 1),
-                                                                                            "feature_vectors_train.tsv")
-            ret= os.system(testCommand)
-            if ret != 0:
-                print(f"[ERROR] Command failed with code {ret}: {testCommand}")
+                                                                                       "feature_vectors_train.tsv")
+            print(testCommand)
+            os.system(testCommand)
             os.system(testCommand2)
             os.system(testCommand3)
         if not os.path.exists(
@@ -896,7 +895,7 @@ class MILdataset(data.Dataset):
     from collections import defaultdict
     from sklearn.cluster import MiniBatchKMeans
     # to start off -> force model to learn from diverse features (which includes making it learn from clusters rather than simply random)
-    def make_clustered_warmup_data(self, all_tile_probs, all_features, percentile=0.05, n_clusters=8, min_k=1, max_k=20):
+    def make_clustered_warmup_data(self, all_tile_probs, all_features, percentile=0.1, n_clusters=8, min_k=1, max_k=20):
         """
         Dynamically selects the top percentage of tiles from each cluster based on probability.
         Ensures morphological diversity while keeping sampling representative of cluster size.

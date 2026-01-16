@@ -251,16 +251,19 @@ def main ():
 		pool = multiprocessing.Pool(max_seed * max_process_per_gpu)
 		results = []
 		for i in range(max_seed):
+
 			r = pool.apply_async(utilsModel.generateFeatureVectorsUsingBestModels, args=(i, models_parallel[i], args.project, args.projectPath, args.python, outputPath, args.batch_size, args.dropoutRate, "5x", bestModels_parallel[i], args.checkpointModel))
 			results.append(r)
 		pool.close()
 		pool.join()
 
-		for r in results:
-			r.wait()
-			if not r.successful():
-				# Raises an error when not successful
+		for i, r in enumerate(results):
+			try:
 				r.get()
+			except Exception as e:
+				print(f"Worker failed at seed {i}: {e}")
+				import traceback
+				traceback.print_exc()
 		print("\tAll " + str(args.ensemble) + " ensemble feature vectors have been generated.", flush=True)
 
 	if args.pullROIs:
