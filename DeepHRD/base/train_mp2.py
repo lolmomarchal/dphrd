@@ -364,15 +364,14 @@ def main():
     warmup_done = False
 
     # Initialize at Stage 0
-    trainable_params = set_trainable_layers(model, stage=2)
-    optimizer = torch.optim.AdamW(trainable_params, lr=1e-4, weight_decay=5e-2)
+    optimizer = get_optim_and_sched(model, criterion, 2, 0)
     current_stage = 0
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer,
-        T_max=args.epochs,
-        eta_min=1e-6
-    )
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    #     optimizer,
+    #     T_max=args.epochs,
+    #     eta_min=1e-6
+    # )
 
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     trans = transforms.Compose([
