@@ -314,7 +314,7 @@ def get_optim_and_sched(model, criterion, stage, total_epochs):
     ], weight_decay=1e-3)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=total_epochs, eta_min=1e-6
+        optimizer, T_max=200, eta_min=1e-6
     )
     return optimizer, scheduler
 def main():
