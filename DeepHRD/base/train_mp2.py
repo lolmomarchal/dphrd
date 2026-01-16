@@ -364,7 +364,7 @@ def main():
     warmup_done = False
 
     # Initialize at Stage 0
-    optimizer = get_optim_and_sched(model, criterion, 2, 0)
+    optimizer, scheduler = get_optim_and_sched(model, criterion, 2, 0)
     current_stage = 0
 
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
