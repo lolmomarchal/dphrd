@@ -361,6 +361,7 @@ def main():
 
     infer_trans = transforms.Compose([
         transforms.ToTensor(),
+
         normalize
     ])
     if args.train_inference_transforms_enabled:
