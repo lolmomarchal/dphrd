@@ -76,34 +76,30 @@ parser.add_argument('--lambda_reg_mse', type=float, default=1.0,
 # ================ LOSS ======================
 
 class SoftCrossEntropyLoss(nn.Module):
-    def __init__(self, weight=None, reduction='mean', smoothing=0.1):
+    def __init__(self, weight=None, smoothing=0.05): # Lowered to 0.05 for stability
         super(SoftCrossEntropyLoss, self).__init__()
-        self.weight = weight
-        self.reduction = reduction
+        self.register_buffer('weight', weight)
         self.smoothing = smoothing
 
     def forward(self, logits, targets):
-        # targets: [P_HRP, P_HRD]
+        # targets: [batch, 2] soft labels
         if self.smoothing > 0:
-            # Shift targets towards a uniform distribution (0.5, 0.5)
+            # Smooths [0, 1] to [0.025, 0.975]
             targets = targets * (1.0 - self.smoothing) + 0.5 * self.smoothing
 
         log_probs = F.log_softmax(logits, dim=1)
-        loss = -(targets * log_probs)
+
+        # Calculate weighted cross entropy for soft targets
+        # Formula: -sum(target * log_prob)
+        loss = -(targets * log_probs).sum(dim=1)
 
         if self.weight is not None:
-            # Apply class weights to the HRP/HRD loss
-            # We pick the weight based on the dominant class
-            weight = self.weight.to(logits.device).unsqueeze(0)
-            loss = loss * weight
+            # We apply weights based on which class the soft label leans toward
+            # This handles the [1, 0, 1, 0] issue by forcing the weight application
+            sample_weights = targets[:, 0] * self.weight[0] + targets[:, 1] * self.weight[1]
+            loss = loss * sample_weights
 
-        loss = loss.sum(dim=1)
-
-        if self.reduction == 'mean':
-            return loss.mean()
-        elif self.reduction == 'sum':
-            return loss.sum()
-        return loss
+        return loss.mean()
 # for when there is a LARGE class dif
 class FocalLossWithProbs(nn.Module):
     def __init__(self, alpha=None, gamma=2.0, reduction="mean"):

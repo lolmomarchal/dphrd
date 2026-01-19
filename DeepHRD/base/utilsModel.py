@@ -640,103 +640,174 @@ class MILdataset(data.Dataset):
 
     def setTransforms(self, transforms):
         self.transform = transforms
+    def preselect_epoch_slides(self, sampling_mode='balanced_combined'):
+        all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.softLabels]
+        buckets = defaultdict(list)
+        for i in range(len(self.slidenames)):
+            if 'combined' in sampling_mode:
+                key = f"{self.subtype[i]}_{all_targets_hard[i]}"
+            elif 'subtype' in sampling_mode:
+                key = f"{self.subtype[i]}"
+            elif 'target' in sampling_mode:
+                key = f"{all_targets_hard[i]}"
+            else:
+                key = "all"
+            buckets[key].append(i)
+        print("\n" + "="*30)
+        print(f"[INFO] ORIGINAL DATA DISTRIBUTION:")
+        for b_key, b_indices in buckets.items():
+            print(f"  - {b_key}: {len(b_indices)} slides")
+        print("="*30)
 
-    def preselect_epoch_slides(self, sampling_mode='dampened_combined'):
-        unique_original_slide_ids = list(range(len(self.slidenames)))
-        num_slides_to_sample = len(unique_original_slide_ids)
+        counts = [len(v) for v in buckets.values()]
+        if not counts: return
+        target_samples_per_bucket = int(np.median(counts))
 
         shuffled_original_slide_ids = []
-        weights = None
-        counts_to_log = None
+        for key, indices in buckets.items():
+            if len(indices) >= target_samples_per_bucket:
+                shuffled_original_slide_ids.extend(random.sample(indices, target_samples_per_bucket))
+            else:
 
-        try:
+                shuffled_original_slide_ids.extend(indices)
+                remaining = target_samples_per_bucket - len(indices)
+                if remaining > 0:
+                    shuffled_original_slide_ids.extend(random.choices(indices, k=remaining))
 
-            if 'subtype' in sampling_mode:
-                all_subtypes = self.subtype
-                subtype_counts = Counter(all_subtypes)
-                counts_to_log = subtype_counts
-                if sampling_mode == 'dampened_subtype':
-                    weights = [(1.0 / subtype_counts[s]) ** 0.5 for s in all_subtypes]
-                elif sampling_mode == 'balanced_subtype':
-                    weights = [1.0 / subtype_counts[s] for s in all_subtypes]
-                shuffled_original_slide_ids = random.choices(
-                    population=unique_original_slide_ids,
-                    weights=weights,  #
-                    k=num_slides_to_sample
-                )
+        random.shuffle(shuffled_original_slide_ids)
+        # PRINT NEW EPOCH DISTRIBUTION
+        new_strata = []
+        for i in shuffled_original_slide_ids:
+            new_strata.append(f"{self.subtype[i]}_Target{all_targets_hard[i]}")
 
-            elif 'target' in sampling_mode:
-                all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.softLabels]
-                target_counts = Counter(all_targets_hard)
-                counts_to_log = target_counts
-                if sampling_mode == 'dampened_target':
-                    weights = [(1.0 / target_counts[t]) ** 0.5 for t in all_targets_hard]
-                elif sampling_mode == 'balanced_target':
-                    weights = [1.0 / target_counts[t] for t in all_targets_hard]
-                shuffled_original_slide_ids = random.choices(
-                    population=unique_original_slide_ids,
-                    weights=weights,  #
-                    k=num_slides_to_sample
-                )
+        epoch_counts = Counter(new_strata)
+        print(f"[INFO] NEW EPOCH DISTRIBUTION (by Stratum):")
+        for b_key in sorted(epoch_counts.keys()):
+            print(f"  - {b_key:25} : {epoch_counts[b_key]:4} instances")
 
-            elif 'combined' in sampling_mode:
-                all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.softLabels]
-                all_subtypes = self.subtype
-                all_combined_keys = [f"{s}_{t}" for s, t in zip(all_subtypes, all_targets_hard)]
-                combined_counts = Counter(all_combined_keys)
-                counts_to_log = combined_counts
-                if sampling_mode == 'dampened_combined':
-                    weights = [(1.0 / combined_counts[key]) ** 0.5 for key in all_combined_keys]
-                elif sampling_mode == 'balanced_combined':
-                    weights = [1.0 / combined_counts[key] for key in all_combined_keys]
-                shuffled_original_slide_ids = random.choices(
-                    population=unique_original_slide_ids,
-                    weights=weights,  #
-                    k=num_slides_to_sample
-                )
-            elif "none" in sampling_mode:
-                unique_original_slide_ids = list(range(len(self.slidenames)))
-                num_slides_to_sample = len(unique_original_slide_ids)
-                shuffled_original_slide_ids = unique_original_slide_ids.copy()
-            # random.shuffle(shuffled_original_slide_ids)
+        # Also print a high-level Target balance
+        new_targets = [all_targets_hard[i] for i in shuffled_original_slide_ids]
+        print(f"[INFO] NEW EPOCH TARGET TOTALS: {Counter(new_targets)}")
+        print("="*50 + "\n")
 
-            if counts_to_log:
-                print(f"[INFO] Sampling from base counts: {counts_to_log}")
-            sampled_subtypes = [self.subtype[i] for i in shuffled_original_slide_ids]
-            # print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
-            sampled_targets = [1 if self.softLabels[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
-            # print(f"[INFO] Post-sampling target distribution: {Counter(sampled_targets)}")
-
-
-        except Exception as e:
-            print(f"[ERROR] preselect_epoch_slides: Error during weighting: {e}. Falling back to uniform sampling.")
-
-        selected_slide_set = set(shuffled_original_slide_ids)
-        # print(f"[INFO] Pre-selection resulted in {len(selected_slide_set)} unique slides for this epoch's inference.")
-
+        # new_targets = [all_targets_hard[i] for i in shuffled_original_slide_ids]
+        # print(f"[INFO] New Epoch Balance: {Counter(new_targets)}")
         self.epoch_tile_info = []
         self.epoch_slide_id_map = {}
         self.epoch_target_map = {}
         self.epoch_subtype_map = {}
         self.epoch_softlabel_map = {}
-        new_slide_idx_counter = 0
 
-        for i in range(len(self.grid)):
-            original_slide_id = self.slideIDX[i]
+        original_slide_to_tiles = defaultdict(list)
+        for i, orig_id in enumerate(self.slideIDX):
+            original_slide_to_tiles[orig_id].append(i)
+        for new_instance_id, original_slide_id in enumerate(shuffled_original_slide_ids):
+            self.epoch_target_map[new_instance_id] = self.targets[original_slide_id]
+            self.epoch_subtype_map[new_instance_id] = self.subtype[original_slide_id]
+            self.epoch_softlabel_map[new_instance_id] = self.softLabels[original_slide_id]
 
-            if original_slide_id in selected_slide_set:
-                if original_slide_id not in self.epoch_slide_id_map:
-                    new_id = new_slide_idx_counter
-                    self.epoch_slide_id_map[original_slide_id] = new_id
-                    self.epoch_target_map[new_id] = self.targets[original_slide_id]
-                    self.epoch_subtype_map[new_id] = self.subtype[original_slide_id]
-                    self.epoch_softlabel_map[new_id] = self.softLabels[original_slide_id]
-                    new_slide_idx_counter += 1
+            tile_indices = original_slide_to_tiles[original_slide_id]
+            for t_idx in tile_indices:
+                self.epoch_tile_info.append((t_idx, new_instance_id))
 
-                new_epoch_slide_id = self.epoch_slide_id_map[original_slide_id]
-                self.epoch_tile_info.append((i, new_epoch_slide_id))
+        print(f"[INFO] Created epoch with {len(shuffled_original_slide_ids)} slide instances.")
 
-        # print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
+    # def preselect_epoch_slides(self, sampling_mode='dampened_combined'):
+    #     unique_original_slide_ids = list(range(len(self.slidenames)))
+    #     num_slides_to_sample = len(unique_original_slide_ids)
+    #
+    #     shuffled_original_slide_ids = []
+    #     weights = None
+    #     counts_to_log = None
+    #
+    #     try:
+    #
+    #         if 'subtype' in sampling_mode:
+    #             all_subtypes = self.subtype
+    #             subtype_counts = Counter(all_subtypes)
+    #             counts_to_log = subtype_counts
+    #             if sampling_mode == 'dampened_subtype':
+    #                 weights = [(1.0 / subtype_counts[s]) ** 0.5 for s in all_subtypes]
+    #             elif sampling_mode == 'balanced_subtype':
+    #                 weights = [1.0 / subtype_counts[s] for s in all_subtypes]
+    #             shuffled_original_slide_ids = random.choices(
+    #                 population=unique_original_slide_ids,
+    #                 weights=weights,  #
+    #                 k=num_slides_to_sample
+    #             )
+    #
+    #         elif 'target' in sampling_mode:
+    #             all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.softLabels]
+    #             target_counts = Counter(all_targets_hard)
+    #             counts_to_log = target_counts
+    #             if sampling_mode == 'dampened_target':
+    #                 weights = [(1.0 / target_counts[t]) ** 0.5 for t in all_targets_hard]
+    #             elif sampling_mode == 'balanced_target':
+    #                 weights = [1.0 / target_counts[t] for t in all_targets_hard]
+    #             shuffled_original_slide_ids = random.choices(
+    #                 population=unique_original_slide_ids,
+    #                 weights=weights,  #
+    #                 k=num_slides_to_sample
+    #             )
+    #
+    #         elif 'combined' in sampling_mode:
+    #             all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.softLabels]
+    #             all_subtypes = self.subtype
+    #             all_combined_keys = [f"{s}_{t}" for s, t in zip(all_subtypes, all_targets_hard)]
+    #             combined_counts = Counter(all_combined_keys)
+    #             counts_to_log = combined_counts
+    #             if sampling_mode == 'dampened_combined':
+    #                 weights = [(1.0 / combined_counts[key]) ** 0.5 for key in all_combined_keys]
+    #             elif sampling_mode == 'balanced_combined':
+    #                 weights = [1.0 / combined_counts[key] for key in all_combined_keys]
+    #             shuffled_original_slide_ids = random.choices(
+    #                 population=unique_original_slide_ids,
+    #                 weights=weights,  #
+    #                 k=num_slides_to_sample
+    #             )
+    #         elif "none" in sampling_mode:
+    #             unique_original_slide_ids = list(range(len(self.slidenames)))
+    #             num_slides_to_sample = len(unique_original_slide_ids)
+    #             shuffled_original_slide_ids = unique_original_slide_ids.copy()
+    #         # random.shuffle(shuffled_original_slide_ids)
+    #
+    #         if counts_to_log:
+    #             print(f"[INFO] Sampling from base counts: {counts_to_log}")
+    #         sampled_subtypes = [self.subtype[i] for i in shuffled_original_slide_ids]
+    #         # print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
+    #         sampled_targets = [1 if self.softLabels[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
+    #         # print(f"[INFO] Post-sampling target distribution: {Counter(sampled_targets)}")
+    #
+    #
+    #     except Exception as e:
+    #         print(f"[ERROR] preselect_epoch_slides: Error during weighting: {e}. Falling back to uniform sampling.")
+    #
+    #     selected_slide_set = set(shuffled_original_slide_ids)
+    #     # print(f"[INFO] Pre-selection resulted in {len(selected_slide_set)} unique slides for this epoch's inference.")
+    #
+    #     self.epoch_tile_info = []
+    #     self.epoch_slide_id_map = {}
+    #     self.epoch_target_map = {}
+    #     self.epoch_subtype_map = {}
+    #     self.epoch_softlabel_map = {}
+    #     new_slide_idx_counter = 0
+    #
+    #     for i in range(len(self.grid)):
+    #         original_slide_id = self.slideIDX[i]
+    #
+    #         if original_slide_id in selected_slide_set:
+    #             if original_slide_id not in self.epoch_slide_id_map:
+    #                 new_id = new_slide_idx_counter
+    #                 self.epoch_slide_id_map[original_slide_id] = new_id
+    #                 self.epoch_target_map[new_id] = self.targets[original_slide_id]
+    #                 self.epoch_subtype_map[new_id] = self.subtype[original_slide_id]
+    #                 self.epoch_softlabel_map[new_id] = self.softLabels[original_slide_id]
+    #                 new_slide_idx_counter += 1
+    #
+    #             new_epoch_slide_id = self.epoch_slide_id_map[original_slide_id]
+    #             self.epoch_tile_info.append((i, new_epoch_slide_id))
+    #
+    #     # print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
     def maket_data(self, all_tile_probs, percentile=0.05, min_k=5, max_k=15):
         """
         Robust adaptive selection that handles repeated slides from sampling.
@@ -920,20 +991,33 @@ class MILdataset(data.Dataset):
 
             target = self.epoch_target_map[slide_id]
             soft_label = self.epoch_softlabel_map[slide_id]
-
+            # INSIDE make_clustered_warmup_data
             for c_id in range(n_c):
                 cluster_mask = (labels == c_id)
                 if not np.any(cluster_mask): continue
 
                 c_indices = indices[cluster_mask]
-                c_probs = probs[cluster_mask]
 
-                num_to_pick = int(len(c_indices) * percentile)
-                num_to_pick = max(min_k, min(num_to_pick, max_k))
-                top_indices = np.argsort(c_probs)[-num_to_pick:]
-                selected_grid_idxs = c_indices[top_indices]
+                num_to_pick = max(min_k, min(int(len(c_indices) * percentile), max_k))
+                selected_indices = np.random.choice(len(c_indices), num_to_pick, replace=False)
+                selected_grid_idxs = c_indices[selected_indices]
 
                 for g_idx in selected_grid_idxs:
                     self.t_data.append((slide_id, self.grid[g_idx], target, soft_label))
+
+            # for c_id in range(n_c):
+            #     cluster_mask = (labels == c_id)
+            #     if not np.any(cluster_mask): continue
+            #
+            #     c_indices = indices[cluster_mask]
+            #     c_probs = probs[cluster_mask]
+            #
+            #     num_to_pick = int(len(c_indices) * percentile)
+            #     num_to_pick = max(min_k, min(num_to_pick, max_k))
+            #     top_indices = np.argsort(c_probs)[-num_to_pick:]
+            #     selected_grid_idxs = c_indices[top_indices]
+            #
+            #     for g_idx in selected_grid_idxs:
+            #         self.t_data.append((slide_id, self.grid[g_idx], target, soft_label))
 
         print(f"[INFO] Adaptive Warmup: Created {len(self.t_data)} tiles using top {percentile*100}% per cluster.")
