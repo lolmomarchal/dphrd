@@ -616,12 +616,12 @@ class MILdataset(data.Dataset):
             self.softLabels = lib["softLabels"]
             self.grid = grid
             self.slideIDX = slideIDX
-
-            print(f"--- Dataset Loading Summary ---")
-            print(f"[INFO] Total valid tiles loaded: {len(self.grid)}")
-            print(f"[INFO] Total invalid/missing tiles skipped: {invalid_count}")
-            print(f"[INFO] From {len(self.slidenames)} slides.")
-            print(f"-------------------------------")
+            #
+            # print(f"--- Dataset Loading Summary ---")
+            # print(f"[INFO] Total valid tiles loaded: {len(self.grid)}")
+            # print(f"[INFO] Total invalid/missing tiles skipped: {invalid_count}")
+            # print(f"[INFO] From {len(self.slidenames)} slides.")
+            # print(f"-------------------------------")
 
         self.transform = transform
         self.mode = 1
@@ -703,16 +703,16 @@ class MILdataset(data.Dataset):
             if counts_to_log:
                 print(f"[INFO] Sampling from base counts: {counts_to_log}")
             sampled_subtypes = [self.subtype[i] for i in shuffled_original_slide_ids]
-            print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
+            # print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
             sampled_targets = [1 if self.softLabels[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
-            print(f"[INFO] Post-sampling target distribution: {Counter(sampled_targets)}")
+            # print(f"[INFO] Post-sampling target distribution: {Counter(sampled_targets)}")
 
 
         except Exception as e:
             print(f"[ERROR] preselect_epoch_slides: Error during weighting: {e}. Falling back to uniform sampling.")
 
         selected_slide_set = set(shuffled_original_slide_ids)
-        print(f"[INFO] Pre-selection resulted in {len(selected_slide_set)} unique slides for this epoch's inference.")
+        # print(f"[INFO] Pre-selection resulted in {len(selected_slide_set)} unique slides for this epoch's inference.")
 
         self.epoch_tile_info = []
         self.epoch_slide_id_map = {}
@@ -736,7 +736,7 @@ class MILdataset(data.Dataset):
                 new_epoch_slide_id = self.epoch_slide_id_map[original_slide_id]
                 self.epoch_tile_info.append((i, new_epoch_slide_id))
 
-        print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
+        # print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
     def maket_data(self, all_tile_probs, percentile=0.05, min_k=5, max_k=15):
         """
         Robust adaptive selection that handles repeated slides from sampling.
