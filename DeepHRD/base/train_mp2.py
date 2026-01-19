@@ -346,7 +346,7 @@ def get_optim_and_sched(model, criterion, stage, total_epochs):
             "lr": 1e-3,
         })
 
-    optimizer = torch.optim.AdamW(param_groups, weight_decay=1e-3)
+    optimizer = torch.optim.AdamW(param_groups, weight_decay=1e-2)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=total_epochs, eta_min=1e-6
@@ -359,8 +359,8 @@ def main():
     # torch.set_num_threads(1)
     global best_val_loss, device, args
     args = parser.parse_args()
-    E_CLUSTER = 10
-    E_UNFREEZE = 20
+    E_CLUSTER = 8
+    E_UNFREEZE = 30
 
     resolution = args.resolution
     os.makedirs(args.output, exist_ok=True)

@@ -658,21 +658,32 @@ class MILdataset(data.Dataset):
         for b_key, b_indices in buckets.items():
             print(f"  - {b_key}: {len(b_indices)} slides")
         print("="*30)
-
         counts = [len(v) for v in buckets.values()]
         if not counts: return
-        target_samples_per_bucket = int(np.median(counts))
+
+        # We take the median as a reference, but we don't force everyone TO it.
+        median_size = int(np.median(counts))
 
         shuffled_original_slide_ids = []
         for key, indices in buckets.items():
-            if len(indices) >= target_samples_per_bucket:
-                shuffled_original_slide_ids.extend(random.sample(indices, target_samples_per_bucket))
+            n_available = len(indices)
+
+            if n_available >= median_size:
+
+                num_to_sample = median_size
             else:
 
+                gap = median_size - n_available
+                num_to_sample = n_available + int(gap * 0.5) # 0.5 is the 'Dampening Factor'
+
+            if n_available >= num_to_sample:
+                shuffled_original_slide_ids.extend(random.sample(indices, num_to_sample))
+            else:
                 shuffled_original_slide_ids.extend(indices)
-                remaining = target_samples_per_bucket - len(indices)
+                remaining = num_to_sample - n_available
                 if remaining > 0:
                     shuffled_original_slide_ids.extend(random.choices(indices, k=remaining))
+
 
         random.shuffle(shuffled_original_slide_ids)
         # PRINT NEW EPOCH DISTRIBUTION
@@ -702,6 +713,7 @@ class MILdataset(data.Dataset):
         for i, orig_id in enumerate(self.slideIDX):
             original_slide_to_tiles[orig_id].append(i)
         for new_instance_id, original_slide_id in enumerate(shuffled_original_slide_ids):
+            self.epoch_slide_id_map[new_instance_id] = original_slide_id
             self.epoch_target_map[new_instance_id] = self.targets[original_slide_id]
             self.epoch_subtype_map[new_instance_id] = self.subtype[original_slide_id]
             self.epoch_softlabel_map[new_instance_id] = self.softLabels[original_slide_id]
@@ -809,27 +821,19 @@ class MILdataset(data.Dataset):
     #
     #     # print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
     def maket_data(self, all_tile_probs, percentile=0.05, min_k=5, max_k=15):
-        """
-        Robust adaptive selection that handles repeated slides from sampling.
-        """
-        # 1. Group tile indices by their position in the CURRENT epoch
-        # We use the unique index 'i' to handle slides that appear multiple times
         instance_to_tiles = defaultdict(list)
 
+        # We iterate through the epoch_tile_info which uses new_instance_id
         for i in range(len(self.epoch_tile_info)):
-            # original_grid_index links to the actual image
-            # slide_instance_id is the ID for THIS specific occurrence in the epoch
-            original_grid_index, slide_instance_id = self.epoch_tile_info[i]
+            original_grid_index, new_instance_id = self.epoch_tile_info[i]
 
-            instance_to_tiles[slide_instance_id].append({
+            instance_to_tiles[new_instance_id].append({
                 'grid_idx': original_grid_index,
                 'prob': all_tile_probs[i]
             })
 
         self.t_data = []
-
-        # 2. Iterate through each unique instance in the epoch
-        for instance_id, tiles in instance_to_tiles.items():
+        for inst_id, tiles in instance_to_tiles.items():
             # Sort tiles of this instance by probability
             sorted_tiles = sorted(tiles, key=lambda x: x['prob'], reverse=True)
             num_available = len(sorted_tiles)
@@ -842,17 +846,11 @@ class MILdataset(data.Dataset):
             selected_tiles = sorted_tiles[:k]
 
             # Retrieve metadata using the instance_id
-            target = self.epoch_target_map[instance_id]
-            soft_label = self.epoch_softlabel_map[instance_id]
+            target = self.epoch_target_map[inst_id]
+            soft_label = self.epoch_softlabel_map[inst_id]
 
             for t in selected_tiles:
-                # We store: (instance_id, tile_path, target, soft_label)
-                self.t_data.append((
-                    instance_id,
-                    self.grid[t['grid_idx']],
-                    target,
-                    soft_label
-                ))
+                self.t_data.append((inst_id, self.grid[t['grid_idx']], target, soft_label))
 
         # Shuffle so batches aren't dominated by a single slide
         random.shuffle(self.t_data)
