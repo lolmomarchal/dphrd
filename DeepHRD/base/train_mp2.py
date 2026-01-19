@@ -259,6 +259,7 @@ def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimiz
 
         optimizer.zero_grad()
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         running_loss += loss.item() * batch_size
@@ -318,13 +319,15 @@ def get_optim_and_sched(model, criterion, stage, total_epochs):
         "params": list(model.shared_neck.parameters()) +
                   list(model.classifier.parameters()),
         "lr": 1e-4,
+        "weight_decay": 1e-2
     })
 
     # Layer4 fine-tuning
     if stage >= 1:
         param_groups.append({
             "params": model.resnet.layer4.parameters(),
-            "lr": 2e-5,   # ~5x smaller
+            "lr": 2e-5,
+            "weight_decay": 1e-2
         })
 
     # Full backbone fine-tuning
@@ -336,7 +339,8 @@ def get_optim_and_sched(model, criterion, stage, total_epochs):
 
         param_groups.append({
             "params": backbone_params,
-            "lr": 5e-6,   # ~20x smaller than head
+            "lr": 5e-6,
+            "weight_decay": 1e-3
         })
 
     # Optional: learnable loss params
@@ -349,7 +353,7 @@ def get_optim_and_sched(model, criterion, stage, total_epochs):
     optimizer = torch.optim.AdamW(param_groups, weight_decay=1e-2)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=total_epochs, eta_min=1e-6
+        optimizer, T_max=total_epochs, eta_min=1e-5
     )
 
     return optimizer, scheduler

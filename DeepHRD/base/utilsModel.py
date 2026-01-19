@@ -658,32 +658,39 @@ class MILdataset(data.Dataset):
         for b_key, b_indices in buckets.items():
             print(f"  - {b_key}: {len(b_indices)} slides")
         print("="*30)
+        # 3. Determine sampling depth with Soft-Cap Lenience
         counts = [len(v) for v in buckets.values()]
         if not counts: return
-
-        # We take the median as a reference, but we don't force everyone TO it.
-        median_size = int(np.median(counts))
+        median_size = int(np.median(counts)) # Around 40 in your case
 
         shuffled_original_slide_ids = []
         for key, indices in buckets.items():
             n_available = len(indices)
 
             if n_available >= median_size:
-
-                num_to_sample = median_size
+                # SOFT-CAP LENIENCE for Majority Classes:
+                # Instead of a hard cap at 40, we take: median + 30% of the excess.
+                # Example (175 slides): 40 + (135 * 0.30) = ~80 slides.
+                # This retains 45% of the unique slides rather than only 22%.
+                excess = n_available - median_size
+                num_to_sample = median_size + int(excess * 0.30)
             else:
-
+                # DAMPENED BOOST for Minority Classes:
+                # We bring them halfway to the median to ensure signal.
+                # Example (5 slides): 5 + (35 * 0.5) = ~22 instances.
                 gap = median_size - n_available
-                num_to_sample = n_available + int(gap * 0.5) # 0.5 is the 'Dampening Factor'
+                num_to_sample = n_available + int(gap * 0.5)
 
+            # 4. Standard Sampling Execution
             if n_available >= num_to_sample:
+                # Sub-sample without replacement (all unique slides)
                 shuffled_original_slide_ids.extend(random.sample(indices, num_to_sample))
             else:
+                # Take all unique + duplicate some for the boost
                 shuffled_original_slide_ids.extend(indices)
                 remaining = num_to_sample - n_available
                 if remaining > 0:
                     shuffled_original_slide_ids.extend(random.choices(indices, k=remaining))
-
 
         random.shuffle(shuffled_original_slide_ids)
         # PRINT NEW EPOCH DISTRIBUTION
