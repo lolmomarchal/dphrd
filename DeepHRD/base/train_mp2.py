@@ -404,8 +404,8 @@ def main():
 
 
     # Initialize at Stage 0
-    optimizer, scheduler = get_optim_and_sched(model, criterion, 0, 200)
-    current_stage = 0
+    optimizer, scheduler = get_optim_and_sched(model, criterion, 4, 200)
+    current_stage = 4
 
     # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     #     optimizer,
@@ -473,8 +473,8 @@ def main():
 
         if new_stage != current_stage:
                 current_stage = new_stage
-                print(f"\n>>> Transitioning to Stage {current_stage}")
-                optimizer, scheduler = get_optim_and_sched(model, criterion, current_stage, args.epochs - epoch)
+                # print(f"\n>>> Transitioning to Stage {current_stage}")
+                # optimizer, scheduler = get_optim_and_sched(model, criterion, current_stage, args.epochs - epoch)
 
         # i. make sure that inference is evaluated BY the warmup
         train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode)
