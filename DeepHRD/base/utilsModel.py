@@ -708,8 +708,7 @@ class MILdataset(data.Dataset):
         print(f"[INFO] NEW EPOCH TARGET TOTALS: {Counter(new_targets)}")
         print("="*50 + "\n")
 
-        # new_targets = [all_targets_hard[i] for i in shuffled_original_slide_ids]
-        # print(f"[INFO] New Epoch Balance: {Counter(new_targets)}")
+
         self.epoch_tile_info = []
         self.epoch_slide_id_map = {}
         self.epoch_target_map = {}
@@ -827,13 +826,12 @@ class MILdataset(data.Dataset):
     #             self.epoch_tile_info.append((i, new_epoch_slide_id))
     #
     #     # print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
-    def maket_data(self, all_tile_probs, percentile=0.05, min_k=5, max_k=15):
+    def maket_data(self, all_tile_probs, percentile=0.20, min_k=5, max_k=15):
         instance_to_tiles = defaultdict(list)
 
-        # We iterate through the epoch_tile_info which uses new_instance_id
+        # 1. Group tiles by Instance ID
         for i in range(len(self.epoch_tile_info)):
             original_grid_index, new_instance_id = self.epoch_tile_info[i]
-
             instance_to_tiles[new_instance_id].append({
                 'grid_idx': original_grid_index,
                 'prob': all_tile_probs[i]
@@ -841,25 +839,30 @@ class MILdataset(data.Dataset):
 
         self.t_data = []
         for inst_id, tiles in instance_to_tiles.items():
-            # Sort tiles of this instance by probability
             sorted_tiles = sorted(tiles, key=lambda x: x['prob'], reverse=True)
             num_available = len(sorted_tiles)
 
-            # Adaptive K logic
-            k = int(num_available * percentile)
-            k = max(min_k, min(k, max_k))
-            k = min(k, num_available)
 
-            selected_tiles = sorted_tiles[:k]
+            k_target = int(num_available * 0.05)
+            k_target = max(min_k, min(k_target, max_k))
+            k_target = min(k_target, num_available)
 
-            # Retrieve metadata using the instance_id
+
+            pool_size = int(num_available * percentile)
+            pool_size = max(pool_size, k_target * 2)
+            pool_size = min(pool_size, num_available)
+
+            candidate_pool = sorted_tiles[:pool_size]
+
+
+            selected_tiles = random.sample(candidate_pool, k_target)
+
             target = self.epoch_target_map[inst_id]
             soft_label = self.epoch_softlabel_map[inst_id]
 
             for t in selected_tiles:
                 self.t_data.append((inst_id, self.grid[t['grid_idx']], target, soft_label))
 
-        # Shuffle so batches aren't dominated by a single slide
         random.shuffle(self.t_data)
     def maketraindata(self, idxs):
         slide_to_tiles = defaultdict(list)

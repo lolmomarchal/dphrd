@@ -76,7 +76,7 @@ parser.add_argument('--lambda_reg_mse', type=float, default=1.0,
 # ================ LOSS ======================
 
 class SoftCrossEntropyLoss(nn.Module):
-    def __init__(self, weight=None, smoothing=0.05): # Lowered to 0.05 for stability
+    def __init__(self, weight=None, smoothing=0.15): # Lowered to 0.05 for stability
         super(SoftCrossEntropyLoss, self).__init__()
         self.register_buffer('weight', weight)
         self.smoothing = smoothing
@@ -94,8 +94,6 @@ class SoftCrossEntropyLoss(nn.Module):
         loss = -(targets * log_probs).sum(dim=1)
 
         if self.weight is not None:
-            # We apply weights based on which class the soft label leans toward
-            # This handles the [1, 0, 1, 0] issue by forcing the weight application
             sample_weights = targets[:, 0] * self.weight[0] + targets[:, 1] * self.weight[1]
             loss = loss * sample_weights
 
@@ -167,7 +165,11 @@ def enable_dropout(model):
     for m in model.modules():
         if m.__class__.__name__.startswith('Dropout'):
             m.train()
-
+            m.p = 0.1
+def reset_dropout(model, original_rate):
+    for m in model.modules():
+        if m.__class__.__name__.startswith('Dropout'):
+            m.p = original_rate
 def inference(loader, model, criterion, enable_dropout_flag=False):
     model.eval()
     if len(loader.dataset) == 0:
@@ -285,80 +287,72 @@ best_val_loss = np.inf
 best_val_loss = np.inf
 
 def set_trainable_layers(model, stage):
-    """
-    Stage 0: Heads & Neck only (Warmup)
-    Stage 1: Stage 0 + ResNet Layer 4
-    Stage 2: Everything unfrozen
-    """
     for param in model.parameters():
         param.requires_grad = False
 
-    for param in model.shared_neck.parameters():
-        param.requires_grad = True
-    for param in model.classifier.parameters():
+    for param in model.head.parameters():
         param.requires_grad = True
 
     if stage >= 1:
         for param in model.resnet.layer4.parameters():
             param.requires_grad = True
-
     if stage >= 2:
         for param in model.resnet.parameters():
             param.requires_grad = True
 
     return [p for p in model.parameters() if p.requires_grad]
 
-
-def get_optim_and_sched(model, criterion, stage, total_epochs):
+def get_optim_and_sched(model, criterion, stage, total_epochs, current_epoch=0):
     set_trainable_layers(model, stage)
 
     param_groups = []
 
-    # Head & neck (always trainable)
+    # 1. NEW HEAD (Direct 512-dim logic)
+    # We use a higher weight decay here to prevent the 'Epoch 12 stagnation'
     param_groups.append({
-        "params": list(model.shared_neck.parameters()) +
-                  list(model.classifier.parameters()),
+        "params": model.head.parameters(),
         "lr": 1e-4,
-        "weight_decay": 1e-2
+        "weight_decay": 0.05  # Stronger regularization for the wider head
     })
 
-    # Layer4 fine-tuning
+    # 2. Layer 4 Fine-tuning
     if stage >= 1:
         param_groups.append({
             "params": model.resnet.layer4.parameters(),
             "lr": 2e-5,
-            "weight_decay": 1e-2
+            "weight_decay": 0.01
         })
 
-    # Full backbone fine-tuning
+    # 3. Backbone (Layers 1-3)
     if stage >= 2:
-        backbone_params = []
-        for name, p in model.resnet.named_parameters():
-            if not name.startswith("layer4"):
-                backbone_params.append(p)
-
+        backbone_params = [p for name, p in model.resnet.named_parameters()
+                           if not name.startswith("layer4")]
         param_groups.append({
             "params": backbone_params,
             "lr": 5e-6,
-            "weight_decay": 1e-3
+            "weight_decay": 0.001 # Minimal decay for fundamental features
         })
 
-    # Optional: learnable loss params
-    if hasattr(criterion, "parameters"):
+    # 4. Optional: Uncertainty Loss params
+    if hasattr(criterion, "parameters") and list(criterion.parameters()):
         param_groups.append({
             "params": criterion.parameters(),
             "lr": 1e-3,
         })
 
+    # Base optimizer - Note: weight_decay here is a fallback
     optimizer = torch.optim.AdamW(param_groups, weight_decay=1e-2)
 
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, T_max=total_epochs, eta_min=1e-5
+    # Use WarmRestarts to 'bump' the LR when new stages begin
+    # This prevents the model from getting stuck in local minima during transitions
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer,
+        T_0=30,     # Matches your E_UNFREEZE
+        T_mult=1,
+        eta_min=1e-6
     )
 
     return optimizer, scheduler
-
-
 def main():
     # torch.set_num_threads(1)
     global best_val_loss, device, args
@@ -400,7 +394,7 @@ def main():
         model.load_state_dict(torch.load(args.checkpoint)["state_dict"])
     model.to(device)
     # 4. Initiate criterion, optimizer
-    criterion = SoftCrossEntropyLoss(weight=class_weights).to(device)
+    criterion = SoftCrossEntropyLoss().to(device)
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     cudnn.benchmark = True
 
@@ -459,7 +453,7 @@ def main():
         writer = csv.writer(f)
         writer.writerow([
             'epoch', 'train_loss', 'train_auc', 'train_acc', 'train_f1', 'val_loss', 'val_acc',
-            'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr','s_cls', 's_reg', "SAVED"
+            'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr', "SAVED"
         ])
     early_stop = 0
 
@@ -494,10 +488,8 @@ def main():
 
         epoch_slide_ids = np.array([x[1] for x in train_dset.epoch_tile_info])
 
-        # 2. Get the number of unique slide instances in this epoch
         num_epoch_slides = len(train_dset.epoch_slide_id_map)
 
-        # 3. Calculate slide predictions using the epoch-specific IDs
         train_slide_preds = ut.groupTopKtilesAverage(
             epoch_slide_ids,
             probs,
@@ -507,8 +499,6 @@ def main():
             max_k=15
         )
 
-        # 4. Correctly align the true labels with the epoch slide IDs
-        # We use epoch_softlabel_map because it maps the new_id to the correct label
         train_true_labels = np.array([
             1 if train_dset.epoch_softlabel_map[i][1] >= 0.5 else 0
             for i in range(num_epoch_slides)
@@ -522,8 +512,11 @@ def main():
 
         if epoch< args.warmup_epochs:
             train_dset.make_clustered_warmup_data(probs, features)
+        elif epoch < 15:
+            train_dset.maket_data(probs, percentile=0.30, min_k=10, max_k=20)
+
         else:
-            train_dset.maket_data(probs, percentile=0.05, min_k=5, max_k=15)
+            train_dset.maket_data(probs, percentile=0.05, min_k=2, max_k=15)
 
         # ii. start with training based on top instances
 
@@ -542,7 +535,7 @@ def main():
             pin_memory=pin_memory)
         train_dset.modelState(2)
         train_dset.setTransforms(trans)
-
+        reset_dropout(model, args.dropoutRate)
         supcon_loader = torch.utils.data.DataLoader(
             supcon_dset,
             batch_size=args.batch_size*4,
