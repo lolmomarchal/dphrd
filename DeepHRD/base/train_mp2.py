@@ -299,7 +299,7 @@ def get_optim_and_sched(model, stage):
         for param in model.resnet.layer4.parameters(): param.requires_grad = True
         params = [
             {"params": model.head.parameters(), "lr": 5e-5, "weight_decay": 1e-2},
-            {"params": model.resnet.layer4.parameters(), "lr": 1e-5, "weight_decay": 1e-4}
+            {"params": model.resnet.layer4.parameters(), "lr": 5e-6, "weight_decay": 1e-4}
         ]
     else: # Stage 2
         for param in model.resnet.parameters(): param.requires_grad = True

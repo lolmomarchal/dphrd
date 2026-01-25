@@ -907,7 +907,7 @@ class MILdataset(data.Dataset):
 
             else:
                 # Phase 3: Transition (70% Top-K + 30% Random diversity)
-                top_k_count = int(k * 0.7)
+                top_k_count = int(k * 0.8)
                 random_k_count = k - top_k_count
                 selected = list(range(n_tiles - top_k_count, n_tiles))
                 remaining = list(range(n_tiles - top_k_count))
