@@ -287,21 +287,39 @@ def set_trainable_layers(model, stage):
 
     return [p for p in model.parameters() if p.requires_grad]
 
-def get_optim_and_sched(model, stage):
-    # Stage 0: Warmup (Epochs 1-30) -> Head only
-    # Stage 1: Fine-tuning (Epochs 31-50) -> Head + Layer 4
-    # Stage 2: Full Fine-tuning (Epochs 51+) -> Entire ResNet
-
+def get_optim_and_sched(model, stage, epoch, E_UNFREEZE_L4):
+    """
+    Returns an optimizer with a linear warmup for the backbone LR
+    to prevent 'shock' during stage transitions.
+    """
+    # Stage 0: Warmup (Frozen Backbone)
     if stage == 0:
         for param in model.resnet.parameters(): param.requires_grad = False
         params = [{"params": model.head.parameters(), "lr": 1e-4, "weight_decay": 1e-2}]
+
+    # Stage 1: Fine-tuning Layer 4
     elif stage == 1:
         for param in model.resnet.layer4.parameters(): param.requires_grad = True
+
+        # --- LINEAR WARMUP LOGIC ---
+        warmup_duration = 5  # Number of epochs to reach full LR
+        target_lr = 5e-6
+        base_lr = 1e-7
+
+        if epoch < E_UNFREEZE_L4 + warmup_duration:
+            # Linear interpolation: current = start + (end - start) * (progress)
+            progress = (epoch - E_UNFREEZE_L4) / warmup_duration
+            current_backbone_lr = base_lr + (target_lr - base_lr) * progress
+        else:
+            current_backbone_lr = target_lr
+
         params = [
             {"params": model.head.parameters(), "lr": 5e-5, "weight_decay": 1e-2},
-            {"params": model.resnet.layer4.parameters(), "lr": 5e-6, "weight_decay": 1e-4}
+            {"params": model.resnet.layer4.parameters(), "lr": current_backbone_lr, "weight_decay": 1e-4}
         ]
-    else: # Stage 2
+
+    # Stage 2: Full Fine-tuning
+    else:
         for param in model.resnet.parameters(): param.requires_grad = True
         params = [
             {"params": model.head.parameters(), "lr": 1e-5, "weight_decay": 1e-2},
@@ -309,9 +327,9 @@ def get_optim_and_sched(model, stage):
         ]
 
     optimizer = torch.optim.AdamW(params)
+    # T_0 matches the stage length to ensure full decay cycles
     scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=1)
     return optimizer, scheduler
-
 
 def main():
     # torch.set_num_threads(1)
@@ -321,8 +339,8 @@ def main():
 
     # ======= params for train
     E_EXPLORE = 5
-    E_UNCERTAIN = 15
-    E_UNFREEZE_L4 = 30
+    E_UNCERTAIN = 10
+    E_UNFREEZE_L4 = 25
     E_UNFREEZE_ALL = 60
     # E_EXPLORE = 1
     # E_UNCERTAIN = 2
@@ -421,6 +439,7 @@ def main():
 
     for epoch in tqdm.tqdm(range(args.epochs), total=args.epochs):
         new_stage = current_stage
+        is_warmup_window = (epoch >= E_UNFREEZE_L4 and epoch < E_UNFREEZE_L4 + 5)
         if early_stop == args.patience:
             print(f"[INFO]: STOPPED AT EPOCH {epoch + 1} AFTER {args.patience} EPOCHS OF NO IMPROVEMENT")
             break
@@ -435,11 +454,10 @@ def main():
             should_freeze_bn = False # Fully unfreeze for final convergence
 
 
-        if new_stage != current_stage:
+        if new_stage != current_stage or is_warmup_window:
                 current_stage = new_stage
                 print(f"\n>>> Transitioning to Stage {current_stage}")
-                optimizer, scheduler = get_optim_and_sched(model, current_stage)
-
+                optimizer, scheduler = get_optim_and_sched(model, current_stage, epoch, E_UNFREEZE_L4)
         # ==== preselecting slides for this epoch -> based on subtype sampler
         train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode)
         train_dset.modelState(1)
