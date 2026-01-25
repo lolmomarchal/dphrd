@@ -390,7 +390,8 @@ def main():
 
     # ===================== training =============
     best_val_loss = float('inf')
-    current_stage = 0
+    current_stage = 2
+    # get_optim_and_sched
     optimizer, scheduler = get_optim_and_sched(model, current_stage, 0, E_UNFREEZE_L4)
 
 # transformations
@@ -446,19 +447,22 @@ def main():
             break
         if epoch < E_UNFREEZE_L4:
             new_stage = 0
-            should_freeze_bn = True
+            # should_freeze_bn = True
+            should_freeze_bn = False
         elif epoch < E_UNFREEZE_ALL:
             new_stage = 1
-            should_freeze_bn = True # Keep BN frozen while initial L4 tuning happens
-        else:
+            # should_freeze_bn = True # Keep BN frozen while initial L4 tuning happens
+            should_freeze_bn = False
+
+    else:
             new_stage = 2
             should_freeze_bn = False # Fully unfreeze for final convergence
 
 
-        if new_stage != current_stage or is_warmup_window:
-                current_stage = new_stage
-                print(f"\n>>> Transitioning to Stage {current_stage}")
-                optimizer, scheduler = get_optim_and_sched(model, current_stage, epoch, E_UNFREEZE_L4)
+        # if new_stage != current_stage or is_warmup_window:
+        #         current_stage = new_stage
+        #         print(f"\n>>> Transitioning to Stage {current_stage}")
+        #         optimizer, scheduler = get_optim_and_sched(model, current_stage, epoch, E_UNFREEZE_L4)
         # ==== preselecting slides for this epoch -> based on subtype sampler
         train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode)
         train_dset.modelState(1)
