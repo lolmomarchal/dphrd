@@ -503,7 +503,7 @@ def main():
         else:
             # Standard Top-K MIL
             p_factor = 1.5 if current_stage == 1 else 1.1
-            train_dset.maket_data(probs, percentile=0.05, min_k=2, max_k=15, pool_factor=p_factor)
+            train_dset.maket_data(probs, percentile=0.1, min_k=5, max_k=25, pool_factor=p_factor)
             # train_dset.maket_data(probs, percentile=0.05, min_k=2, max_k=15)
         # ====== test on actual ================
 
