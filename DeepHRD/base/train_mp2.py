@@ -454,9 +454,9 @@ def main():
             # should_freeze_bn = True # Keep BN frozen while initial L4 tuning happens
             should_freeze_bn = False
 
-    else:
-            new_stage = 2
-            should_freeze_bn = False # Fully unfreeze for final convergence
+        else:
+                new_stage = 2
+                should_freeze_bn = False # Fully unfreeze for final convergence
 
 
         # if new_stage != current_stage or is_warmup_window:
