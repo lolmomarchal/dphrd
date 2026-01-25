@@ -729,132 +729,33 @@ class MILdataset(data.Dataset):
                 self.epoch_tile_info.append((t_idx, new_instance_id))
 
         print(f"[INFO] Created epoch with {len(shuffled_original_slide_ids)} slide instances.")
-
-    # def preselect_epoch_slides(self, sampling_mode='dampened_combined'):
-    #     unique_original_slide_ids = list(range(len(self.slidenames)))
-    #     num_slides_to_sample = len(unique_original_slide_ids)
-    #
-    #     shuffled_original_slide_ids = []
-    #     weights = None
-    #     counts_to_log = None
-    #
-    #     try:
-    #
-    #         if 'subtype' in sampling_mode:
-    #             all_subtypes = self.subtype
-    #             subtype_counts = Counter(all_subtypes)
-    #             counts_to_log = subtype_counts
-    #             if sampling_mode == 'dampened_subtype':
-    #                 weights = [(1.0 / subtype_counts[s]) ** 0.5 for s in all_subtypes]
-    #             elif sampling_mode == 'balanced_subtype':
-    #                 weights = [1.0 / subtype_counts[s] for s in all_subtypes]
-    #             shuffled_original_slide_ids = random.choices(
-    #                 population=unique_original_slide_ids,
-    #                 weights=weights,  #
-    #                 k=num_slides_to_sample
-    #             )
-    #
-    #         elif 'target' in sampling_mode:
-    #             all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.softLabels]
-    #             target_counts = Counter(all_targets_hard)
-    #             counts_to_log = target_counts
-    #             if sampling_mode == 'dampened_target':
-    #                 weights = [(1.0 / target_counts[t]) ** 0.5 for t in all_targets_hard]
-    #             elif sampling_mode == 'balanced_target':
-    #                 weights = [1.0 / target_counts[t] for t in all_targets_hard]
-    #             shuffled_original_slide_ids = random.choices(
-    #                 population=unique_original_slide_ids,
-    #                 weights=weights,  #
-    #                 k=num_slides_to_sample
-    #             )
-    #
-    #         elif 'combined' in sampling_mode:
-    #             all_targets_hard = [1 if t[1] >= 0.5 else 0 for t in self.softLabels]
-    #             all_subtypes = self.subtype
-    #             all_combined_keys = [f"{s}_{t}" for s, t in zip(all_subtypes, all_targets_hard)]
-    #             combined_counts = Counter(all_combined_keys)
-    #             counts_to_log = combined_counts
-    #             if sampling_mode == 'dampened_combined':
-    #                 weights = [(1.0 / combined_counts[key]) ** 0.5 for key in all_combined_keys]
-    #             elif sampling_mode == 'balanced_combined':
-    #                 weights = [1.0 / combined_counts[key] for key in all_combined_keys]
-    #             shuffled_original_slide_ids = random.choices(
-    #                 population=unique_original_slide_ids,
-    #                 weights=weights,  #
-    #                 k=num_slides_to_sample
-    #             )
-    #         elif "none" in sampling_mode:
-    #             unique_original_slide_ids = list(range(len(self.slidenames)))
-    #             num_slides_to_sample = len(unique_original_slide_ids)
-    #             shuffled_original_slide_ids = unique_original_slide_ids.copy()
-    #         # random.shuffle(shuffled_original_slide_ids)
-    #
-    #         if counts_to_log:
-    #             print(f"[INFO] Sampling from base counts: {counts_to_log}")
-    #         sampled_subtypes = [self.subtype[i] for i in shuffled_original_slide_ids]
-    #         # print(f"[INFO] Post-sampling subtype distribution: {Counter(sampled_subtypes)}")
-    #         sampled_targets = [1 if self.softLabels[i][1] >= 0.5 else 0 for i in shuffled_original_slide_ids]
-    #         # print(f"[INFO] Post-sampling target distribution: {Counter(sampled_targets)}")
-    #
-    #
-    #     except Exception as e:
-    #         print(f"[ERROR] preselect_epoch_slides: Error during weighting: {e}. Falling back to uniform sampling.")
-    #
-    #     selected_slide_set = set(shuffled_original_slide_ids)
-    #     # print(f"[INFO] Pre-selection resulted in {len(selected_slide_set)} unique slides for this epoch's inference.")
-    #
-    #     self.epoch_tile_info = []
-    #     self.epoch_slide_id_map = {}
-    #     self.epoch_target_map = {}
-    #     self.epoch_subtype_map = {}
-    #     self.epoch_softlabel_map = {}
-    #     new_slide_idx_counter = 0
-    #
-    #     for i in range(len(self.grid)):
-    #         original_slide_id = self.slideIDX[i]
-    #
-    #         if original_slide_id in selected_slide_set:
-    #             if original_slide_id not in self.epoch_slide_id_map:
-    #                 new_id = new_slide_idx_counter
-    #                 self.epoch_slide_id_map[original_slide_id] = new_id
-    #                 self.epoch_target_map[new_id] = self.targets[original_slide_id]
-    #                 self.epoch_subtype_map[new_id] = self.subtype[original_slide_id]
-    #                 self.epoch_softlabel_map[new_id] = self.softLabels[original_slide_id]
-    #                 new_slide_idx_counter += 1
-    #
-    #             new_epoch_slide_id = self.epoch_slide_id_map[original_slide_id]
-    #             self.epoch_tile_info.append((i, new_epoch_slide_id))
-    #
-    #     # print(f"[INFO] Created new inference set with {len(self.epoch_tile_info)} tiles from {len(self.epoch_slide_id_map)} unique slides.")
-    def maket_data(self, all_tile_probs, percentile=0.20, min_k=5, max_k=15):
+    def maket_data(self, all_tile_probs, percentile=0.20, min_k=5, max_k=15, pool_factor=2.0):
+        """
+        pool_factor: controls how much larger the candidate pool is than k_target.
+        - 2.0 (Default): Very stochastic, good for earlier stages.
+        - 1.2: Very focused, good for final unfreezing stages.
+        """
         instance_to_tiles = defaultdict(list)
-
-        # 1. Group tiles by Instance ID
         for i in range(len(self.epoch_tile_info)):
-            original_grid_index, new_instance_id = self.epoch_tile_info[i]
-            instance_to_tiles[new_instance_id].append({
-                'grid_idx': original_grid_index,
-                'prob': all_tile_probs[i]
-            })
+            grid_idx, inst_id = self.epoch_tile_info[i]
+            instance_to_tiles[inst_id].append({'grid_idx': grid_idx, 'prob': all_tile_probs[i]})
 
         self.t_data = []
         for inst_id, tiles in instance_to_tiles.items():
             sorted_tiles = sorted(tiles, key=lambda x: x['prob'], reverse=True)
-            num_available = len(sorted_tiles)
+            num_avail = len(sorted_tiles)
 
+            # 1. Target number of tiles (5% of slide)
+            k_target = max(min_k, min(int(num_avail * 0.05), max_k))
+            k_target = min(k_target, num_avail)
 
-            k_target = int(num_available * 0.05)
-            k_target = max(min_k, min(k_target, max_k))
-            k_target = min(k_target, num_available)
-
-
-            pool_size = int(num_available * percentile)
-            pool_size = max(pool_size, k_target * 2)
-            pool_size = min(pool_size, num_available)
+            # 2. Candidate Pool size based on pool_factor
+            # Earlier: pool_factor 2.0 -> sample k from top 2k tiles
+            # Later: pool_factor 1.1 -> sample k from top 1.1k tiles
+            pool_size = max(int(k_target * pool_factor), k_target)
+            pool_size = min(pool_size, num_avail)
 
             candidate_pool = sorted_tiles[:pool_size]
-
-
             selected_tiles = random.sample(candidate_pool, k_target)
 
             target = self.epoch_target_map[inst_id]
@@ -969,7 +870,55 @@ class MILdataset(data.Dataset):
             return len(self.t_data)
         else:
             return 0
+    # In utilsModel.py -> inside MILdataset class
+    def make_smart_warmup_data(self, all_tile_probs, epoch, explore_thresh=5, uncertain_thresh=15, percentile=0.15, min_k=5, max_k=50):
+        """
+        Curriculum sampling that scales based on training thresholds.
+        """
+        instance_to_tiles = defaultdict(list)
+        for i in range(len(self.epoch_tile_info)):
+            grid_idx, inst_id = self.epoch_tile_info[i]
+            instance_to_tiles[inst_id].append({'grid_idx': grid_idx, 'prob': all_tile_probs[i]})
 
+        self.t_data = []
+        for inst_id, tiles in instance_to_tiles.items():
+            target = self.epoch_target_map[inst_id]
+            soft_label = self.epoch_softlabel_map[inst_id]
+            sorted_tiles = sorted(tiles, key=lambda x: x['prob'])
+            n_tiles = len(sorted_tiles)
+
+            # Calculate k based on slide size
+            k = max(min_k, min(int(n_tiles * percentile), max_k))
+            k = min(k, n_tiles)
+
+            # --- CURRICULUM PHASES ---
+            if epoch < explore_thresh:
+                # Phase 1: Pure Exploration
+                selected = random.sample(range(n_tiles), k)
+
+            elif epoch < uncertain_thresh:
+                # Phase 2: Focus on the "Confused" middle (25th to 75th percentile)
+                mid_start, mid_end = n_tiles // 4, 3 * n_tiles // 4
+                available = list(range(mid_start, mid_end))
+                if len(available) < k:
+                    selected = random.sample(range(n_tiles), k)
+                else:
+                    selected = random.sample(available, k)
+
+            else:
+                # Phase 3: Transition (70% Top-K + 30% Random diversity)
+                top_k_count = int(k * 0.7)
+                random_k_count = k - top_k_count
+                selected = list(range(n_tiles - top_k_count, n_tiles))
+                remaining = list(range(n_tiles - top_k_count))
+                if remaining:
+                    selected.extend(random.sample(remaining, min(random_k_count, len(remaining))))
+
+            for idx in selected:
+                tile = sorted_tiles[idx]
+                self.t_data.append((inst_id, self.grid[tile['grid_idx']], target, soft_label))
+
+        random.shuffle(self.t_data)
     import random
     from collections import defaultdict
     from sklearn.cluster import MiniBatchKMeans
@@ -1012,20 +961,5 @@ class MILdataset(data.Dataset):
 
                 for g_idx in selected_grid_idxs:
                     self.t_data.append((slide_id, self.grid[g_idx], target, soft_label))
-
-            # for c_id in range(n_c):
-            #     cluster_mask = (labels == c_id)
-            #     if not np.any(cluster_mask): continue
-            #
-            #     c_indices = indices[cluster_mask]
-            #     c_probs = probs[cluster_mask]
-            #
-            #     num_to_pick = int(len(c_indices) * percentile)
-            #     num_to_pick = max(min_k, min(num_to_pick, max_k))
-            #     top_indices = np.argsort(c_probs)[-num_to_pick:]
-            #     selected_grid_idxs = c_indices[top_indices]
-            #
-            #     for g_idx in selected_grid_idxs:
-            #         self.t_data.append((slide_id, self.grid[g_idx], target, soft_label))
 
         print(f"[INFO] Adaptive Warmup: Created {len(self.t_data)} tiles using top {percentile*100}% per cluster.")

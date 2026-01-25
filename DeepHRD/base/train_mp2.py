@@ -232,58 +232,43 @@ def inference(loader, model, criterion, enable_dropout_flag=False):
     return all_probs, mean_total, all_features
 
 
-def train(run, loader,supcon_loader ,model, criterion, criterion_supcon, optimizer, lambda_reg=0.2, device="cpu"):
-    """
-    Updated train function with Supervised Contrastive Loss (SupCon)
-    that only runs on tiles with "definitive" hard labels (e.g., [0, 1] or [1, 0]).
-    """
+def train(run, loader, supcon_loader, model, criterion, criterion_supcon, optimizer, lambda_reg=0.2, device="cpu", freeze_backbone_bn=True):
     model.train()
+
+    # CRITICAL: Freeze BN stats if the backbone is technically frozen
+    if freeze_backbone_bn:
+        for m in model.resnet.modules():
+            if isinstance(m, torch.nn.BatchNorm2d):
+                m.eval()
+                m.weight.requires_grad = False
+                m.bias.requires_grad = False
+
     running_loss = 0.0
-    running_inst_loss = 0.0
     total_samples = 0
-    if len(loader.dataset) == 0:
-        print(f"[EPOCH {run}] Warning: Training dataset is empty. Skipping train step.")
-        return 0.0, 0.0
     for i, (input, target, softLabel, slide_ids) in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[TRAINING]"):
-        if input.size(0) <= 1:
-            print("skipping batch, only 1 item")
-            continue
-        input = input.to(device, non_blocking= True )
-        target = target.to(device, non_blocking= True )
-        softLabel = softLabel.to(device, non_blocking= True)
+        input = input.to(device, non_blocking=True)
+        softLabel = softLabel.to(device, non_blocking=True)
         batch_size = input.size(0)
         total_samples += batch_size
-        combined_target = torch.cat([softLabel, target.unsqueeze(1)], dim=1).float()
-
-        logits, hrd_score_pred, features = model(input)
-
-        loss= criterion(logits, softLabel)
 
         optimizer.zero_grad()
+        logits, _, _ = model(input)
+        loss = criterion(logits, softLabel)
+
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
+        total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        if torch.isnan(total_norm) or torch.isinf(total_norm):
+            print(f"[CRITICAL] Exploding gradients detected at Epoch {run}. Skipping batch.")
+            optimizer.zero_grad()
+        else:
+            optimizer.step()
 
         running_loss += loss.item() * batch_size
-        del input, target, softLabel, combined_target # do not remove unless you want computer to crash
-        # gc.collect()
-        # torch.cuda.empty_cache()
 
-    if total_samples == 0:
-        epoch_loss = 0.0
-        epoch_inst_loss = 0.0
-    else:
-        epoch_loss = running_loss / total_samples
-        epoch_inst_loss = running_inst_loss / total_samples
-
-    print(
-        f"[EPOCH {run}] Mean train loss: {epoch_loss:.6f} | "
-    )
-    return epoch_loss, 0.0
+    return running_loss / total_samples, 0.0
 
 
 # ================= TRAIN LOOP ==================
-best_val_loss = np.inf
 best_val_loss = np.inf
 
 def set_trainable_layers(model, stage):
@@ -302,67 +287,51 @@ def set_trainable_layers(model, stage):
 
     return [p for p in model.parameters() if p.requires_grad]
 
-def get_optim_and_sched(model, criterion, stage, total_epochs, current_epoch=0):
-    set_trainable_layers(model, stage)
+def get_optim_and_sched(model, stage):
+    # Stage 0: Warmup (Epochs 1-30) -> Head only
+    # Stage 1: Fine-tuning (Epochs 31-50) -> Head + Layer 4
+    # Stage 2: Full Fine-tuning (Epochs 51+) -> Entire ResNet
 
-    param_groups = []
+    if stage == 0:
+        for param in model.resnet.parameters(): param.requires_grad = False
+        params = [{"params": model.head.parameters(), "lr": 1e-4, "weight_decay": 1e-2}]
+    elif stage == 1:
+        for param in model.resnet.layer4.parameters(): param.requires_grad = True
+        params = [
+            {"params": model.head.parameters(), "lr": 5e-5, "weight_decay": 1e-2},
+            {"params": model.resnet.layer4.parameters(), "lr": 1e-5, "weight_decay": 1e-4}
+        ]
+    else: # Stage 2
+        for param in model.resnet.parameters(): param.requires_grad = True
+        params = [
+            {"params": model.head.parameters(), "lr": 1e-5, "weight_decay": 1e-2},
+            {"params": model.resnet.parameters(), "lr": 5e-6, "weight_decay": 1e-5}
+        ]
 
-    # 1. NEW HEAD (Direct 512-dim logic)
-    # We use a higher weight decay here to prevent the 'Epoch 12 stagnation'
-    param_groups.append({
-        "params": model.head.parameters(),
-        "lr": 1e-4,
-        "weight_decay": 0.05  # Stronger regularization for the wider head
-    })
-
-    # 2. Layer 4 Fine-tuning
-    if stage >= 1:
-        param_groups.append({
-            "params": model.resnet.layer4.parameters(),
-            "lr": 2e-5,
-            "weight_decay": 0.01
-        })
-
-    # 3. Backbone (Layers 1-3)
-    if stage >= 2:
-        backbone_params = [p for name, p in model.resnet.named_parameters()
-                           if not name.startswith("layer4")]
-        param_groups.append({
-            "params": backbone_params,
-            "lr": 5e-6,
-            "weight_decay": 0.001 # Minimal decay for fundamental features
-        })
-
-    # 4. Optional: Uncertainty Loss params
-    if hasattr(criterion, "parameters") and list(criterion.parameters()):
-        param_groups.append({
-            "params": criterion.parameters(),
-            "lr": 1e-3,
-        })
-
-    # Base optimizer - Note: weight_decay here is a fallback
-    optimizer = torch.optim.AdamW(param_groups, weight_decay=1e-2)
-
-    # Use WarmRestarts to 'bump' the LR when new stages begin
-    # This prevents the model from getting stuck in local minima during transitions
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-        optimizer,
-        T_0=30,     # Matches your E_UNFREEZE
-        T_mult=1,
-        eta_min=1e-6
-    )
-
+    optimizer = torch.optim.AdamW(params)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=20, T_mult=1)
     return optimizer, scheduler
+
+
 def main():
     # torch.set_num_threads(1)
     global best_val_loss, device, args
     args = parser.parse_args()
-    E_CLUSTER = 8
-    E_UNFREEZE = 30
 
+
+    # ======= params for train
+    E_EXPLORE = 5
+    E_UNCERTAIN = 15
+    E_UNFREEZE_L4 = 30
+    E_UNFREEZE_ALL = 50
+    # E_EXPLORE = 1
+    # E_UNCERTAIN = 2
+    # E_UNFREEZE_L4 = 3
+    # E_UNFREEZE_ALL = 4
     resolution = args.resolution
     os.makedirs(args.output, exist_ok=True)
 
+    # =========== weighing values + device set up
     device = "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu":
         print(f"[INFO] no CUDA device available. If this is a mistake please check your setup.")
@@ -389,30 +358,23 @@ def main():
             weights = total_samples / (num_classes * sorted_counts)
             class_weights = torch.FloatTensor(weights).to(device, non_blocking= True )
             print(f"Auto-calculated weights from argmax of 'targets' key: {class_weights.cpu().tolist()}")
+
+
+    # ================= model set up ===========================
     model = RNN(args.dropoutRate)
     if args.checkpoint:
         model.load_state_dict(torch.load(args.checkpoint)["state_dict"])
     model.to(device)
-    # 4. Initiate criterion, optimizer
     criterion = SoftCrossEntropyLoss().to(device)
     criterion_supcon = losses.SupConLoss(temperature=0.07).to(device, non_blocking= True )
     cudnn.benchmark = True
 
 
+    # ===================== training =============
     best_val_loss = float('inf')
-    warmup_done = False
-
-
-    # Initialize at Stage 0
-    optimizer, scheduler = get_optim_and_sched(model, criterion, 4, 200)
-    current_stage = 4
-
-    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    #     optimizer,
-    #     T_max=args.epochs,
-    #     eta_min=1e-6
-    # )
-
+    current_stage = 0
+    optimizer, scheduler = get_optim_and_sched(model, current_stage)
+    # transformations
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     trans = transforms.Compose([
         transforms.RandomHorizontalFlip(),
@@ -421,7 +383,6 @@ def main():
 
         transforms.RandomResizedCrop(224, scale=(0.8, 1.0)),
         transforms.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.05, hue=0.02),
-        transforms.Resize((224, 224)),
         transforms.ToTensor(),
         normalize
     ])
@@ -435,7 +396,7 @@ def main():
         infer_train_transforms = trans
     else:
         infer_train_transforms = infer_trans
-
+    # ================== datasets =======================
     train_dset = ut.MILdataset(args.train_lib, trans)
     if device == "cpu":
         pin_memory = False
@@ -462,21 +423,23 @@ def main():
         if early_stop == args.patience:
             print(f"[INFO]: STOPPED AT EPOCH {epoch + 1} AFTER {args.patience} EPOCHS OF NO IMPROVEMENT")
             break
-        if epoch < E_CLUSTER:
-            new_stage = 0           # neck + classifier, clustering warmup
-        elif epoch < E_UNFREEZE:
-            new_stage = 0           # still frozen backbone, but percentile MIL
-        elif epoch == E_UNFREEZE:
+        if epoch < E_UNFREEZE_L4:
+            new_stage = 0
+            should_freeze_bn = True
+        elif epoch < E_UNFREEZE_ALL:
             new_stage = 1
-        elif epoch > E_UNFREEZE+20:
-            new_stage =2
+            should_freeze_bn = True # Keep BN frozen while initial L4 tuning happens
+        else:
+            new_stage = 2
+            should_freeze_bn = False # Fully unfreeze for final convergence
+
 
         if new_stage != current_stage:
                 current_stage = new_stage
-                # print(f"\n>>> Transitioning to Stage {current_stage}")
-                # optimizer, scheduler = get_optim_and_sched(model, criterion, current_stage, args.epochs - epoch)
+                print(f"\n>>> Transitioning to Stage {current_stage}")
+                optimizer, scheduler = get_optim_and_sched(model, current_stage)
 
-        # i. make sure that inference is evaluated BY the warmup
+        # ==== preselecting slides for this epoch -> based on subtype sampler
         train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode)
         train_dset.modelState(1)
         train_dset.setTransforms(infer_train_transforms)
@@ -484,18 +447,16 @@ def main():
             train_dset,
             batch_size=args.batch_size, shuffle=False,
             num_workers=args.workers, pin_memory=pin_memory)
+        # ========= perform inference on training set + detail performance ============
         probs, loss, features = inference(infer_loader,model, criterion, enable_dropout_flag=args.train_inference_dropout_enabled)
-
         epoch_slide_ids = np.array([x[1] for x in train_dset.epoch_tile_info])
-
         num_epoch_slides = len(train_dset.epoch_slide_id_map)
-
         train_slide_preds = ut.groupTopKtilesAverage(
             epoch_slide_ids,
             probs,
-            num_epoch_slides, #
-            percentile=0.1,
-            min_k=5,
+            num_epoch_slides,
+            percentile=0.05,
+            min_k=2,
             max_k=15
         )
 
@@ -510,15 +471,21 @@ def main():
         train_acc = accuracy_score(train_true_labels, train_pred_binary)
         train_f1 = f1_score(train_true_labels, train_pred_binary)
 
-        if epoch< args.warmup_epochs:
-            train_dset.make_clustered_warmup_data(probs, features)
-        elif epoch < 15:
-            train_dset.maket_data(probs, percentile=0.30, min_k=10, max_k=20)
+        # ===== perform warmup ===============
+        if epoch < E_UNFREEZE_L4:
+            train_dset.make_smart_warmup_data(
+                probs,
+                epoch,
+                explore_thresh=E_EXPLORE,
+                uncertain_thresh=E_UNCERTAIN
+            )
 
         else:
-            train_dset.maket_data(probs, percentile=0.05, min_k=2, max_k=15)
-
-        # ii. start with training based on top instances
+            # Standard Top-K MIL
+            p_factor = 1.5 if current_stage == 1 else 1.1
+            train_dset.maket_data(probs, percentile=0.05, min_k=2, max_k=15, pool_factor=p_factor)
+            # train_dset.maket_data(probs, percentile=0.05, min_k=2, max_k=15)
+        # ====== test on actual ================
 
         supcon_dset = ut.MILdataset(args.train_lib, trans)
         supcon_dset.epoch_tile_info = train_dset.epoch_tile_info.copy()
@@ -543,10 +510,8 @@ def main():
             num_workers=args.workers,
             pin_memory=pin_memory)
 
-        train_loss, train_inst_loss = train(epoch + 1, train_loader_new,supcon_loader, model,
-                                            criterion, criterion_supcon, optimizer, # <-- Pass new criterion
-                                            lambda_reg=args.lambda_sup,
-                                            device=device)
+        train_loss, _ = train(epoch + 1, train_loader_new, None, model, criterion, None, optimizer,
+                              device=device, freeze_backbone_bn=should_freeze_bn)
         scheduler.step()
         log_data = {
             'epoch': epoch + 1,
@@ -628,11 +593,7 @@ def main():
 
         elif not args.val_lib:
             pass
-        # with torch.no_grad():
-        #     s_cls = torch.exp(-criterion.log_var_cls).item() # "Precision" for classification
-        #     s_reg = torch.exp(-criterion.log_var_reg).item() # "Precision" for regression
-        # log_data['s_cls'] = s_cls
-        # log_data['s_reg'] = s_reg
+
         with open(log_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
