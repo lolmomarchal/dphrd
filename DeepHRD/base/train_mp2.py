@@ -323,7 +323,7 @@ def main():
     E_EXPLORE = 5
     E_UNCERTAIN = 15
     E_UNFREEZE_L4 = 30
-    E_UNFREEZE_ALL = 50
+    E_UNFREEZE_ALL = 60
     # E_EXPLORE = 1
     # E_UNCERTAIN = 2
     # E_UNFREEZE_L4 = 3
@@ -417,6 +417,7 @@ def main():
             'val_auc', 'val_f1', 'val_err', 'val_fpr', 'val_fnr', "SAVED"
         ])
     early_stop = 0
+    best_auc = 0
 
     for epoch in tqdm.tqdm(range(args.epochs), total=args.epochs):
         new_stage = current_stage
@@ -526,7 +527,6 @@ def main():
             'val_err': np.nan,
             'val_fpr': np.nan,
             'val_fnr': np.nan,
-            # 's_cls': np.nan, 's_reg': np.nan,
             "SAVED": ""
         }
         # iii. inference on validation
@@ -578,7 +578,20 @@ def main():
                 save_path = os.path.join(args.output, f'checkpoint_best_{args.resolution}_epoch_{epoch + 1}.pth')
                 torch.save(obj, save_path)
                 log_data['SAVED'] = "YES"
-
+            elif log_data['val_auc'] > best_auc:
+                best_auc = log_data['val_auc']
+                early_stop = 0
+                patience_counter = 0
+                print(f"\n  ** New best validation auc: {log_data['val_auc']} at epoch {epoch + 1}. Saving auc model. **")
+                obj = {
+                    'epoch': epoch + 1,
+                    'state_dict': model.state_dict(),
+                    'best_val_loss': best_val_loss,
+                    'optimizer': optimizer.state_dict()
+                }
+                save_path = os.path.join(args.output, f'checkpoint_best_auc_{args.resolution}_epoch_{epoch + 1}.pth')
+                torch.save(obj, save_path)
+                log_data['SAVED'] = "AUC"
             else:
                 early_stop += 1
                 patience_counter +=1
