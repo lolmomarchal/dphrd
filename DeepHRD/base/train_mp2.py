@@ -391,8 +391,9 @@ def main():
     # ===================== training =============
     best_val_loss = float('inf')
     current_stage = 0
-    optimizer, scheduler = get_optim_and_sched(model, current_stage)
-    # transformations
+    optimizer, scheduler = get_optim_and_sched(model, current_stage, 0, E_UNFREEZE_L4)
+
+# transformations
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     trans = transforms.Compose([
         transforms.RandomHorizontalFlip(),
