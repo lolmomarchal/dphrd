@@ -602,6 +602,9 @@ class MILdataset(data.Dataset):
                         valid_tiles_for_this_slide.append(tile_path)
                     else:
                         invalid_count += 1
+                if len(valid_tiles_for_this_slide) < 10:
+                    print(f"[INFO] Skipping slide {lib['slides'][i]} (only {len(valid_tiles_for_this_slide)} valid tiles)")
+                    continue
 
                 # Only add valid tiles to the global grid
                 grid.extend(valid_tiles_for_this_slide)
