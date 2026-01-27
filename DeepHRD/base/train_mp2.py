@@ -508,10 +508,6 @@ def main():
             print("[ERROR] All slide predictions are NaN. Check model gradients or data loading.")
             train_auc, train_acc, train_f1 = 0, 0, 0
 
-        train_auc = roc_auc_score(train_true_labels, train_slide_preds)
-        train_acc = accuracy_score(train_true_labels, train_pred_binary)
-        train_f1 = f1_score(train_true_labels, train_pred_binary)
-
         # ===== perform warmup ===============
         if epoch < E_UNFREEZE_L4:
             train_dset.make_smart_warmup_data(

@@ -577,10 +577,13 @@ class MILdataset(data.Dataset):
          Initializes all class atributes and filters out missing images.
          '''
         lib = torch.load(libraryfile, map_location='cpu')
-
-        grid = []
-        slideIDX = []
-        invalid_count = 0  # Counter for missing files
+        self.grid = []
+        self.slideIDX = []
+        self.slidenames = [] # New empty list
+        self.targets = []    # New empty list
+        self.subtype = []    # New empty list
+        self.softLabels = [] # New empty list
+        new_slide_idx = 0
 
         if 'tiles' not in lib:
             print(f"[FATAL ERROR in MILdataset] Your .pt file '{libraryfile}' is missing the required 'tiles' key.")
@@ -596,43 +599,18 @@ class MILdataset(data.Dataset):
             # Iterate through each slide's tiles
             self.valid_slide_indices = []
             for i, slide_tiles in enumerate(lib['tiles']):
-                valid_tiles_for_this_slide = []
-                for tile_path in slide_tiles:
-                    # Check if the file actually exists on the system
-                    if os.path.exists(tile_path):
-                        valid_tiles_for_this_slide.append(tile_path)
-                    else:
-                        invalid_count += 1
-                if len(valid_tiles_for_this_slide) < 10:
-                    print(f"[INFO] Skipping slide {lib['slides'][i]} (only {len(valid_tiles_for_this_slide)} valid tiles)")
+                valid_tiles = [t for t in slide_tiles if os.path.exists(t)]
+                if len(valid_tiles) < 10:
+                    print(f"[INFO] Skipping slide {lib['slides'][i]} (only {len(valid_tiles)} valid tiles)")
                     continue
+                self.grid.extend(valid_tiles)
+                self.slideIDX.extend([new_slide_idx] * len(valid_tiles))
 
-                # Only add valid tiles to the global grid
-                grid.extend(valid_tiles_for_this_slide)
-                slideIDX.extend([i] * len(valid_tiles_for_this_slide))
-                self.valid_slide_indices.append(i)
-
-            self.slidenames = lib['slides']
-            raw_scores = np.array(lib['targets'])
-
-            self.targets = (raw_scores / 100.0).tolist()
-            # print(self.targets)
-            self.subtype = lib["subtype"]
-            self.softLabels = lib["softLabels"]
-
-            self.slidenames = [lib['slides'][i] for i in self.valid_slide_indices]
-            self.targets   = [self.targets[i] for i in self.valid_slide_indices]
-            self.subtype   = [self.subtype[i] for i in self.valid_slide_indices]
-            self.softLabels = [self.softLabels[i] for i in self.valid_slide_indices]
-            self.grid = grid
-            self.slideIDX = slideIDX
-
-            #
-            # print(f"--- Dataset Loading Summary ---")
-            # print(f"[INFO] Total valid tiles loaded: {len(self.grid)}")
-            # print(f"[INFO] Total invalid/missing tiles skipped: {invalid_count}")
-            # print(f"[INFO] From {len(self.slidenames)} slides.")
-            # print(f"-------------------------------")
+                self.slidenames.append(lib['slides'][i])
+                self.softLabels.append(lib['softLabels'][i])
+                self.subtype.append(lib['subtype'][i])
+                self.targets.append(lib['targets'][i] / 100.0)
+                new_slide_idx += 1 # Increment only for valid slides
 
         self.transform = transform
         self.mode = 1
@@ -757,7 +735,7 @@ class MILdataset(data.Dataset):
             num_avail = len(sorted_tiles)
 
             # 1. Target number of tiles (5% of slide)
-            k_target = max(min_k, min(int(num_avail * 0.05), max_k))
+            k_target = max(min_k, min(int(num_avail *percentile), max_k))
             k_target = min(k_target, num_avail)
 
             # 2. Candidate Pool size based on pool_factor
