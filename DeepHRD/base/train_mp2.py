@@ -203,6 +203,7 @@ def inference(loader, model, criterion, enable_dropout_flag=False):
             if device == "cuda":
                 with torch.cuda.amp.autocast():
                     logits, hrd_score_pred, features = model(input)
+                    logits = torch.clamp(logits, min=-100, max=100) # Prevents extreme values
 
                     # Unpack the three values from your MultiTaskLoss
 
@@ -253,6 +254,7 @@ def train(run, loader, supcon_loader, model, criterion, criterion_supcon, optimi
 
         optimizer.zero_grad()
         logits, _, _ = model(input)
+        logits = torch.clamp(logits, min=-100, max=100) # Prevents extreme values
         loss = criterion(logits, softLabel)
 
         loss.backward()
@@ -494,6 +496,15 @@ def main():
         nan_mask = np.isnan(train_slide_preds)
         print(f"Slides with NaN preds: {np.sum(nan_mask)}")
         print(f"Indices: {np.where(nan_mask)[0]}")
+        valid_mask = ~np.isnan(train_slide_preds)
+        if np.any(valid_mask):
+            # Only calculate metrics on valid predictions
+            train_auc = roc_auc_score(train_true_labels[valid_mask], train_slide_preds[valid_mask])
+            train_acc = accuracy_score(train_true_labels[valid_mask], train_pred_binary[valid_mask])
+            train_f1 = f1_score(train_true_labels[valid_mask], train_pred_binary[valid_mask])
+        else:
+            print("[ERROR] All slide predictions are NaN. Check model gradients or data loading.")
+            train_auc, train_acc, train_f1 = 0, 0, 0
 
         train_auc = roc_auc_score(train_true_labels, train_slide_preds)
         train_acc = accuracy_score(train_true_labels, train_pred_binary)
