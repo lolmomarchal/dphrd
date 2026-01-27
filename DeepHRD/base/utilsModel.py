@@ -594,6 +594,7 @@ class MILdataset(data.Dataset):
             print(f"[INFO MILdataset] Validating tile paths in '{libraryfile}'...")
 
             # Iterate through each slide's tiles
+            self.valid_slide_indices = []
             for i, slide_tiles in enumerate(lib['tiles']):
                 valid_tiles_for_this_slide = []
                 for tile_path in slide_tiles:
@@ -609,14 +610,12 @@ class MILdataset(data.Dataset):
                 # Only add valid tiles to the global grid
                 grid.extend(valid_tiles_for_this_slide)
                 slideIDX.extend([i] * len(valid_tiles_for_this_slide))
+                self.valid_slide_indices.append(i)
 
-            self.slidenames = lib['slides']
-            raw_scores = np.array(lib['targets'])
-
-            self.targets = (raw_scores / 100.0).tolist()
-            # print(self.targets)
-            self.subtype = lib["subtype"]
-            self.softLabels = lib["softLabels"]
+            self.slidenames = [lib['slides'][i] for i in self.valid_slide_indices]
+            self.targets   = [self.targets[i] for i in self.valid_slide_indices]
+            self.subtype   = [self.subtype[i] for i in self.valid_slide_indices]
+            self.softLabels = [self.softLabels[i] for i in self.valid_slide_indices]
             self.grid = grid
             self.slideIDX = slideIDX
             #
