@@ -85,7 +85,8 @@ def main ():
     model.load_state_dict(ch['state_dict'])
     cudnn.benchmark = True
     normalize = transforms.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225])
-    trans = transforms.Compose([transforms.ToTensor(),normalize])
+
+    trans = transforms.Compose([transforms.Resize((224,224)),transforms.ToTensor(),normalize])
 
     # Loads the testing dataset. The transformations from above are applied to the dataset.
     dset = ut.MILdataset(args.lib, trans)
@@ -106,12 +107,19 @@ def main ():
 
         if args.dropoutRate == 0.0:
             writeFeatureVectorsToFile(probs, features, modelNumber, dset)
-        maxs = ut.groupTopKtilesProbabilities(np.array(dset.slideIDX), probs, len(dset.targets))
+        maxs = ut.groupTopKtilesAverage(
+            np.array(dset.slideIDX),
+            probs,
+            len(dset),
+            percentile=0.05,
+            min_k=5,
+            max_k=25
+        )
 
-        topk, topgroups, topProbs = ut.groupTopKtilesTesting(np.array(dset.slideIDX), probs, 25)
-        newProbs = [[y[0] for y in zip(topProbs, topgroups) if y[1]==x] for x in set(topgroups)]
-        finalProbsK = [np.mean(y) for y in newProbs]
-        allProbs.append(finalProbsK)
+        # topk, topgroups, topProbs = ut.groupTopKtilesTesting(np.array(dset.slideIDX), probs, 25)
+        # newProbs = [[y[0] for y in zip(topProbs, topgroups) if y[1]==x] for x in set(topgroups)]
+        # finalProbsK = [np.mean(y) for y in newProbs]
+        allProbs.append(maxs)
 
     # Save the final predictions for each BN_rep along with the final average probabilities across all iterations.
     allProbs = list(map(list, zip(*allProbs)))
