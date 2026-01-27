@@ -203,11 +203,13 @@ def inference(loader, model, criterion, enable_dropout_flag=False):
             if device == "cuda":
                 with torch.cuda.amp.autocast():
                     logits, hrd_score_pred, features = model(input)
-                    logits = torch.clamp(logits, min=-100, max=100) # Prevents extreme values
+                    logits = torch.clamp(logits, min=-50, max=50) # Prevents extreme values
 
-                    # Unpack the three values from your MultiTaskLoss
-
-                    loss_total =criterion(logits, soft_label)
+                    loss = criterion(logits.float(), soft_label.float())
+                    if torch.isnan(loss):
+                        print(f"DEBUG: Logits: {logits.max().item()}, {logits.min().item()}")
+                        print(f"DEBUG: SoftLabels: {soft_label}")
+                        raise ValueError("NaN Loss detected!")
             else:
                 logits, hrd_score_pred, features = model(input)
                 loss_total = criterion(logits, soft_label)
@@ -254,7 +256,7 @@ def train(run, loader, supcon_loader, model, criterion, criterion_supcon, optimi
 
         optimizer.zero_grad()
         logits, _, _ = model(input)
-        logits = torch.clamp(logits, min=-100, max=100) # Prevents extreme values
+        logits = torch.clamp(logits, min=-50, max=50) # Prevents extreme values
         loss = criterion(logits, softLabel)
 
         loss.backward()
