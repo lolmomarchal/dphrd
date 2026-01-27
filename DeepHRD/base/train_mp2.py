@@ -489,7 +489,15 @@ def main():
             for i in range(num_epoch_slides)
         ])
 
+
         train_pred_binary = np.array([1 if x >= 0.5 else 0 for x in train_slide_preds])
+        import numpy as np
+
+        train_true_labels = np.asarray(train_true_labels)
+        train_slide_preds = np.asarray(train_slide_preds)
+
+        print("NaNs in labels:", np.isnan(train_true_labels).sum())
+        print("NaNs in preds :", np.isnan(train_slide_preds).sum())
 
         train_auc = roc_auc_score(train_true_labels, train_slide_preds)
         train_acc = accuracy_score(train_true_labels, train_pred_binary)
