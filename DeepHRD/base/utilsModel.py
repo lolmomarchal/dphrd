@@ -849,6 +849,10 @@ class MILdataset(data.Dataset):
 
             if self.transform is not None:
                 img = self.transform(img)
+            assert softLabel is not None
+            assert torch.isfinite(softLabel).all()
+            assert softLabel.sum().item() > 0
+
 
             return (img, target, softLabel, slideIDX)
 
