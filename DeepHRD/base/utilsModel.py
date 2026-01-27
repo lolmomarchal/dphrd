@@ -612,12 +612,21 @@ class MILdataset(data.Dataset):
                 slideIDX.extend([i] * len(valid_tiles_for_this_slide))
                 self.valid_slide_indices.append(i)
 
+            self.slidenames = lib['slides']
+            raw_scores = np.array(lib['targets'])
+
+            self.targets = (raw_scores / 100.0).tolist()
+            # print(self.targets)
+            self.subtype = lib["subtype"]
+            self.softLabels = lib["softLabels"]
+
             self.slidenames = [lib['slides'][i] for i in self.valid_slide_indices]
             self.targets   = [self.targets[i] for i in self.valid_slide_indices]
             self.subtype   = [self.subtype[i] for i in self.valid_slide_indices]
             self.softLabels = [self.softLabels[i] for i in self.valid_slide_indices]
             self.grid = grid
             self.slideIDX = slideIDX
+
             #
             # print(f"--- Dataset Loading Summary ---")
             # print(f"[INFO] Total valid tiles loaded: {len(self.grid)}")
