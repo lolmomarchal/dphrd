@@ -491,7 +491,6 @@ def main():
 
 
         train_pred_binary = np.array([1 if x >= 0.5 else 0 for x in train_slide_preds])
-        import numpy as np
 
         train_true_labels = np.asarray(train_true_labels)
         train_slide_preds = np.asarray(train_slide_preds)
