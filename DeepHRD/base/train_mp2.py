@@ -491,12 +491,9 @@ def main():
 
 
         train_pred_binary = np.array([1 if x >= 0.5 else 0 for x in train_slide_preds])
-
-        train_true_labels = np.asarray(train_true_labels)
-        train_slide_preds = np.asarray(train_slide_preds)
-
-        print("NaNs in labels:", np.isnan(train_true_labels).sum())
-        print("NaNs in preds :", np.isnan(train_slide_preds).sum())
+        nan_mask = np.isnan(train_slide_preds)
+        print(f"Slides with NaN preds: {np.sum(nan_mask)}")
+        print(f"Indices: {np.where(nan_mask)[0]}")
 
         train_auc = roc_auc_score(train_true_labels, train_slide_preds)
         train_acc = accuracy_score(train_true_labels, train_pred_binary)
