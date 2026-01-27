@@ -212,10 +212,10 @@ def inference(loader, model, criterion, enable_dropout_flag=False):
                         raise ValueError("NaN Loss detected!")
             else:
                 logits, hrd_score_pred, features = model(input)
-                loss_total = criterion(logits, soft_label)
+                loss = criterion(logits, soft_label)
 
             # Accumulate scalars
-            running_total_loss += loss_total.item() * batch_size
+            running_total_loss += loss.item() * batch_size
             # running_cls_loss += loss_cls.item() * batch_size
             # running_mse_loss += loss_mse.item() * batch_size
 
