@@ -44,6 +44,21 @@ parser.add_argument('--gpu', default=0, type=int, help='gpu device selection (de
 parser.add_argument('--dropoutRate', default=0.2, type=float, help='Rate of dropout to be used within the fully connected layers.')
 parser.add_argument('--resolution', type=str, default='5x', help='Current magnification resolution')
 
+def save_tile_probs(probs, slideIDX, reps, modelNumber):
+	"""
+    Save raw tile-level probabilities so aggregation can be rerun later.
+    """
+	out_file = os.path.join(
+		args.output,
+		f"tile_probs_{modelNumber}_BNrep{reps+1}.npz"
+	)
+
+	np.savez(
+		out_file,
+		probs=probs,                     # shape: [num_tiles]
+		slideIDX=np.array(slideIDX),     # shape: [num_tiles]
+		BN_rep=reps
+	)
 
 def main ():
 	'''
@@ -66,6 +81,7 @@ def main ():
 	'''
 	global args, device
 	args = parser.parse_args()
+	print(args.lib)
 
 
 	# Creates the output directory if it does not already exist
@@ -94,15 +110,27 @@ def main ():
 	else:
 		print(f"Model path:{args.model}")
 		ch = torch.load(args.model, map_location=torch.device('cpu'))
-	model.load_state_dict(ch['state_dict'])
+	state_dict = ch['state_dict']
+
+
+	new_state_dict = {}
+
+	state_dict = ch["state_dict"]
+	new_state_dict = {}
+	# adjust for some of the possible (older versions)
+	for k, v in state_dict.items():
+		if k.startswith("classifier."):
+			k = k.replace("classifier.", "resnet.fc.")
+		elif k.startswith("head."):
+			k = k.replace("head.", "resnet.fc.")
+		new_state_dict[k] = v
+
+	model.load_state_dict(new_state_dict, strict= False)
 	cudnn.benchmark = True
 
-	# Specifies the normalization values to apply to the input data. The normalization weights are consistent with the weights used to 
-	# pretrain the ResNet architectures using the ImageNet database. 
-	normalize = transforms.Normalize(mean=[0.485,0.406,0.406],std=[0.229,0.224,0.225])
+	normalize = transforms.Normalize(mean=[0.485,0.456,0.406],std=[0.229,0.224,0.225]) # fixed transforms to resnet ones :3
 	trans = transforms.Compose([transforms.ToTensor(),normalize])
 
-	# Loads the testing dataset. The transformations from above are applied to the dataset.
 	dset = ut.MILdataset(args.lib, trans)
 	loader = torch.utils.data.DataLoader(
 		dset,
@@ -117,15 +145,30 @@ def main ():
 	modelNumber = args.model.split("/")[-1].split(".")[0]
 	allProbs = []
 	for reps in range(t):
-		# Run an inference pass over the testing dataset
 		probs, features = inference(modelNumber, reps, t, loader, model)
+		save_tile_probs(
+			probs=probs,
+			slideIDX=dset.slideIDX,
+			reps=reps,
+			modelNumber=modelNumber
+		)
 
 		if args.dropoutRate == 0.0:
 			writeFeatureVectorsToFile(probs, features, modelNumber, dset)
+		# Collects the maximum tile probability for each tissue slide and generates the final prediction label
 		maxs = ut.groupTopKtilesProbabilities(np.array(dset.slideIDX), probs, len(dset.targets))
 
-		topk, topgroups, topProbs = ut.groupTopKtilesTesting(np.array(dset.slideIDX), probs, 25)
+		# Collect the indeces for the k top tiles with the maximum predicted probabilites and their corresponding slide indeces and probabilities for each tissue slide
+		topk, topgroups, topProbs = ut.groupTopKtilesTesting(
+			np.array(dset.slideIDX),
+			probs,
+			25
+		)
+
+		# Collects all tile probabilites for each slide
 		newProbs = [[y[0] for y in zip(topProbs, topgroups) if y[1]==x] for x in set(topgroups)]
+
+		# Average the top k tile probabilites and save for the current BN_rep
 		finalProbsK = [np.mean(y) for y in newProbs]
 		allProbs.append(finalProbsK)
 
@@ -136,7 +179,6 @@ def main ():
 	fp.write('file,target,prediction,probability,' + ",".join(['BN_rep-' + str(x+1) for x in range(t)]) + '\n')
 	for name, target, probs in zip(dset.slidenames, dset.targets, allProbs):
 		try:
-			# Output for softlabels
 			fp.write('{},{},{},{},{}\n'.format(name, int(target[1]>=0.5), int(np.mean(probs)>=0.5), np.mean(probs), ",".join([str(y) for y in probs])))
 		except:
 			# Output for non-softlabels
@@ -182,10 +224,9 @@ def inference (modelNumber, reps, t, loader, model):
 			nonlocal instance_features
 			instance_features = output_
 		
-		# Iterates over the test set using mini-batches
 		for i, (input, target, slide_ids) in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[TRAINING]"):
 			input = input.to(device, non_blocking= True )
-			target = target.to(device, non_blocking= True )  # Target shape is (B, 2), e.g., [[0.0, 1.0], [0.3, 0.7]]
+			target = target.to(device, non_blocking= True )  
 			slide_ids = slide_ids.to(device, non_blocking= True )
 			outputList = []
 			currentFeatures = []
