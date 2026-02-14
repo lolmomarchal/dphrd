@@ -551,7 +551,7 @@ def main():
                 f"{log_data['val_err']:.6f}" if not np.isnan(log_data['val_err']) else '',
                 f"{log_data['val_fpr']:.6f}" if not np.isnan(log_data['val_fpr']) else '',
                 f"{log_data['val_fnr']:.6f}" if not np.isnan(log_data['val_fnr']) else '',
-                f"{log_data['SAVED']"}
+                f"{log_data['SAVED']}"
             ])
 
         scheduler.step()
