@@ -18,15 +18,8 @@ import random
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 
-# # BASE_DIR = "/Users/ebergstr/Desktop/lab/thesis/Aim3/histology/BRCA/debug/"
-# # SKIPPED_SAMPLES = os.path.join(BASE_DIR, "skipped_samples.txt")
-
 
 SCALE_FACTOR = 32
-
-
-print("\n\n--- CONFIRMED: RUNNING THE LATEST SCRIPT VERSION ---\n\n") # <<< ADD THIS LINE
-
 def get_tile_image_path(tile):
 	"""
 	Obtain tile image path based on tile information such as row, column, row pixel position, column pixel position,
@@ -94,29 +87,6 @@ def summary_stats(tile_summary):
 				 " %5d (%5.2f%%) tiles >0%% and <%d%% tissue\n" % (
 					 tile_summary.low, tile_summary.low / tile_summary.count * 100, TISSUE_LOW_THRESH) + \
 				 " %5d (%5.2f%%) tiles =0%% tissue" % (tile_summary.none, tile_summary.none / tile_summary.count * 100)
-
-
-
-
-# def parse_dimensions_from_image_filename(filename):
-# 	"""
-# 	Parse an image filename to extract the original width and height and the converted width and height.
-
-# 	Example:
-# 		"TUPAC-TR-011-32x-97103x79079-3034x2471-tile_summary.png" -> (97103, 79079, 3034, 2471)
-
-# 	Args:
-# 		filename: The image filename.
-
-# 	Returns:
-# 		Tuple consisting of the original width, original height, the converted width, and the converted height.
-# 	"""
-# 	m = re.match(".*-([\d]*)x([\d]*)-([\d]*)x([\d]*).*\..*", filename)
-# 	large_w = int(m.group(1))
-# 	large_h = int(m.group(2))
-# 	small_w = int(m.group(3))
-# 	small_h = int(m.group(4))
-# 	return large_w, large_h, small_w, small_h
 
 
 def small_to_large_mapping(small_pixel, large_dimensions):
@@ -415,8 +385,6 @@ def filter_remove_small_objects(np_img, min_size=3000, avoid_overmask=True, over
 	mask_percentage = util.mask_percent(rem_sm)
 	if (mask_percentage >= overmask_thresh) and (min_size >= 1) and (avoid_overmask is True):
 		new_min_size = min_size / 2
-		# print("Mask percentage %3.2f%% >= overmask threshold %3.2f%% for Remove Small Objs size %d, so try %d" % (
-		# 	mask_percentage, overmask_thresh, min_size, new_min_size))
 		rem_sm = filter_remove_small_objects(np_img, new_min_size, avoid_overmask, overmask_thresh, output_type)
 	np_img = rem_sm
 
@@ -486,6 +454,42 @@ def training_slide_to_image(slide_number, slide):
 		os.makedirs(DEST_TRAIN_DIR)
 	img.save(img_path)
 
+def infer_objective_power(slide):
+	"""
+    Infer slide magnification using (in order of priority):
+    1. openslide.objective-power
+    2. openslide.mpp-x (approximation)
+    3. Safe fallback
+    """
+
+	# --- 1. Native objective power (best case) ---
+	obj_key = 'openslide.objective-power'
+	if obj_key in slide.properties:
+		try:
+			return float(slide.properties[obj_key])
+		except Exception:
+			pass
+
+	# --- 2. Approximate from MPP ---
+	mpp_key = 'openslide.mpp-x'
+	if mpp_key in slide.properties:
+		try:
+			mpp = float(slide.properties[mpp_key])
+
+			# Common histology conventions
+			if mpp <= 0.26:
+				return 40.0
+			elif mpp <= 0.52:
+				return 20.0
+			elif mpp <= 1.04:
+				return 10.0
+			else:
+				return 5.0
+		except Exception:
+			pass
+
+	# --- 3. Final fallback ---
+	return 10.0
 
 def slide_to_scaled_pil_image(slide_number, slide):
 	"""
@@ -506,18 +510,15 @@ def slide_to_scaled_pil_image(slide_number, slide):
 
 	new_w = math.floor(large_w / SCALE_FACTOR)
 	new_h = math.floor(large_h / SCALE_FACTOR)
+	objective_power = infer_objective_power(slide)
 
-	try:
-		if abs(0.25  - float(slide.properties['openslide.mpp-x'])) <  abs(0.5  - float(slide.properties['openslide.mpp-x'])):
-			objective_power = 40
-		else:
-			objective_power = 20
-	except:
-		objective_power = 10
+	if objective_power == 10:
 		print(slide, file=skippedSamps, flush=True, end="\t")
 		for x in slide.properties:
-			print("\t".join([str(x), str(slide.properties[x])]), end = "\t", flush=True, file=skippedSamps)
+			print("\t".join([str(x), str(slide.properties[x])]),
+				  end="\t", flush=True, file=skippedSamps)
 		print(file=skippedSamps, flush=True)
+
 	object_file = os.path.join(BASE_DIR , "objectiveInfo.txt")
 	with open(object_file, "a") as out:
 		print("\t".join([str(slide_number).zfill(3), str(objective_power)]), file=out)
@@ -541,13 +542,10 @@ def apply_filters_to_image(slide_num, save=True):
 		Tuple consisting of 1) the resulting filtered image as a NumPy array, and 2) dictionary of image information
 		(used for HTML page generation).
 	"""
-	print(f"save: {save}")
 	info = dict()
 
 	if save and not os.path.exists(FILTER_DIR):
 		os.makedirs(FILTER_DIR)
-	print(f"[DEBUG] In worker for slide {slide_num}, Image.MAX_IMAGE_PIXELS is {Image.MAX_IMAGE_PIXELS}")
-
 
 	img_path = util.getTrainingImagePath(slide_num, DEST_TRAIN_DIR, TRAIN_PREFIX, DEST_TRAIN_EXT, SCALE_FACTOR)#,  large_w, large_h, new_w, new_h)
 	np_orig = util.open_image_np(img_path)
@@ -555,7 +553,6 @@ def apply_filters_to_image(slide_num, save=True):
 
 	if save:
 		result_path = get_filter_image_result(slide_num)
-		print(f"[DEBUG] Saving filtered image for slide {slide_num} to: {result_path}") # Correct location
 		pil_img = util.np_to_pil(filtered_np_img)
 		pil_img.save(result_path)
 
@@ -580,14 +577,11 @@ def get_tile_indices(rows, cols, row_tile_size, col_tile_size, stepSize):
 	indices = list()
 	num_row_tiles, num_col_tiles = util.get_num_tiles(rows, cols, row_tile_size, col_tile_size)
 	for r in np.arange(0, num_row_tiles-1+(1-OVERLAP), stepSize*(1-OVERLAP)):
-	# for r in range(0, num_row_tiles, stepSize):
 		start_r = r * row_tile_size
 		end_r = ((r + 1) * row_tile_size) if (r < num_row_tiles - 1) else rows
 		for c in np.arange(0, num_col_tiles-1+(1-OVERLAP), stepSize*(1-OVERLAP)):
-		# for c in range(0, num_col_tiles, stepSize):
 			start_c = c * col_tile_size
 			end_c = ((c + 1) * col_tile_size) if (c < num_col_tiles - 1) else cols
-			# indices.append((start_r, end_r, start_c, end_c, r + 1, c + 1))
 			indices.append((int(start_r), int(end_r), int(start_c), int(end_c), int(r) + 1, int(c) + 1))
 	return(indices)
 
@@ -820,60 +814,39 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 
 	native_magnification = float(objective_power)
 
-	# # 2. Check for upsampling (SlideLab check)
-	# if native_magnification < desired_magnification and native_magnification > 0:
-	# 	print(f"Warning: Slide {slide_num} native mag ({native_magnification}x) is less than desired mag ({desired_magnification}x).")
-	# 	print("Skipping slide to avoid upsampling.")
-	# 	return tile_sum # Return empty summary
 
-	# 3. Calculate magnification scale factor
+
 	if desired_magnification <= 0 or native_magnification <= 0:
-		# Avoid division by zero if something went wrong
 		scale_factor = 1.0
 	else:
 		# e.g., 40x (native) / 5x (desired) = 8.0
 		scale_factor = native_magnification / desired_magnification
 
-		# 4. Calculate the *adjusted* high-res tile size to read
-	# This logic is from SlideLab's get_best_size_mag
+
 	high_res_adjusted_tile_w = int(round(COL_TILE_SIZE * scale_factor)) # e.g., 256 * 8.0 = 2048
 	high_res_adjusted_tile_h = int(round(ROW_TILE_SIZE * scale_factor)) # e.g., 256 * 8.0 = 2048
 
-	# === END: NEW Magnification-Aware Sizing Logic ===
 
-
-	# === START: SlideLab Coordinate Logic (using adjusted size) ===
-
-	# 1. Define high-res (Level 0) tile size (now using adjusted size)
 	high_res_tile_w = high_res_adjusted_tile_w
 	high_res_tile_h = high_res_adjusted_tile_h
 
-	# 2. Get the *overlap factor* (SlideLab's 'overlap')
 	global OVERLAP
 	if OVERLAP == 0.0:
 		overlap_factor = 1
 	else:
 		overlap_factor = int(round(1 / (1.0 - OVERLAP)))
 
-	# 3. Calculate the stride at Level 0 (based on adjusted size)
-	# This matches SlideLab's logic
+
 	if overlap_factor > 1:
 		stride_x = high_res_tile_w // overlap_factor
 		stride_y = high_res_tile_h // overlap_factor
 	else:
 		stride_x = high_res_tile_w
 		stride_y = high_res_tile_h
-
-	# 4. Generate the full list of high-res (Level 0) *starting* coordinates
-	# We use the original, high-res dimensions (o_w, o_h)
-	# This logic matches SlideLab's np.arange
 	high_res_x_coords = np.arange(0, o_w - high_res_tile_w + stride_x, stride_x)
 	high_res_y_coords = np.arange(0, o_h - high_res_tile_h + stride_y, stride_y)
 
-	# === END: SlideLab Coordinate Logic ===
 
-
-	# === START: Modified TILE LOOP ===
 	count = 0
 	high = 0
 	medium = 0
@@ -886,8 +859,6 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 		for o_c_s_raw in high_res_x_coords:
 			count += 1
 
-			# --- High-Res (Level 0) Coordinates ---
-			# These are now for the *adjusted* size (e.g., 2048x2048)
 			o_r_s = int(o_r_s_raw)
 			o_c_s = int(o_c_s_raw)
 			o_r_e = int(o_r_s + high_res_tile_h) # e.g., 0 + 2048 = 2048
@@ -895,9 +866,6 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 
 			if o_r_e > o_h: o_r_e = o_h
 			if o_c_e > o_w: o_c_e = o_w
-
-			# --- TISSUE CHECK (using low-res mask) ---
-			# Map high-res start/end coords to low-res mask coords
 			r_s_lowres = int(round(o_r_s / SCALE_FACTOR))
 			c_s_lowres = int(round(o_c_s / SCALE_FACTOR))
 			r_e_lowres = int(round(o_r_e / SCALE_FACTOR))
@@ -932,7 +900,6 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 
 			np_scaled_tile = np_tile if small_tile_in_tile else None
 
-			# The o_r_s, o_r_e, o_c_s, o_c_e are now the *adjusted* high-res coords
 			tile = Tile(tile_sum, slide_num, np_scaled_tile, count, r_num, c_num,
 						r_s_lowres, r_e_lowres, c_s_lowres, c_e_lowres,
 						o_r_s, o_r_e, o_c_s, o_c_e,
@@ -941,7 +908,6 @@ def score_tiles(slide_num, np_img=None, dimensions=None, small_tile_in_tile=Fals
 
 			c_num += 1
 		r_num += 1
-	# === END: MODIFIED TILE LOOP ===
 
 	tile_sum.count = count
 	tile_sum.high = high
@@ -961,10 +927,8 @@ def training_slide_range_to_images(start_ind, end_ind, train_images):
     count = 0
     for slide_num in range(start_ind, end_ind + 1):
         try:
-            print(f"Converting slide #{slide_num}...") # Add a print to see progress
             training_slide_to_image(slide_num, train_images[count])
             count += 1
-            print(f"Successfully converted slide #{slide_num}.")
         except Exception as e:
             print(f"--- !!! FAILED to convert slide #{slide_num} !!! ---")
             print(f"Error Type: {type(e).__name__}, Message: {e}")
@@ -1073,13 +1037,11 @@ def summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data, removeBl
 
 	"""
 	try:
-		print("ok")
 		img_path = get_filter_image_result(slide_num)
 	except Exception as e:
 		print(e)
 
 		return(None)
-	print("?")
 	np_img = util.open_image_np(img_path)
 	try:
 		tile_sum = score_tiles(slide_num, np_img)
@@ -1127,7 +1089,6 @@ def save_tile_data(tile_summary):
 		tile_summary: TimeSummary object.
 	"""
 
-	# time = Time()
 
 	csv = summary_title(tile_summary) + "\n" + summary_stats(tile_summary)
 
@@ -1142,7 +1103,6 @@ def save_tile_data(tile_summary):
 			t.s_and_v_factor, t.quantity_factor, t.score)
 		csv += line
 
-	# data_path = slide.get_tile_data_path(tile_summary.slide_num)
 	TILE_DATA_DIR = os.path.join(BASE_DIR, "tile_data_" + RESOLUTION + "_overlap" + str(OVERLAP).replace(".", ""))
 	if not os.path.exists(TILE_DATA_DIR):
 		os.makedirs(TILE_DATA_DIR)
@@ -1165,20 +1125,15 @@ def image_range_to_tiles(start_ind, end_ind, slides, save_top_tiles, save_data, 
 		save_top_tiles: If True, save top tiles to files.
 	"""
 	image_num_list = list()
-	print(f"image num list {image_num_list}")
 	tile_summaries_dict = dict()
 	count = 0
 	finished = 0
 	for slide_num in range(start_ind, end_ind + 1):
-		print(f"on slide: {slide_num}")
 		imageSlide = slides[count]
-		print(imageSlide)
-		print(os.path.join(TILE_DIR, str(slide_num).zfill(3)))
 		if os.path.exists(os.path.join(TILE_DIR, str(slide_num).zfill(3))):
 			print("does exist")
 			continue
 		tile_summary = summary_and_tiles(slide_num, imageSlide, save_top_tiles, save_data, removeBlurry)
-		print("passedd tile summary")
 		if tile_summary == None:
 			continue
 		image_num_list.append(slide_num)
@@ -1212,19 +1167,15 @@ def multiprocess_training_slides_to_images(numProcessors=None):
 	images_per_process = num_train_images / num_processes
 
 
-	print("\n[DEBUG] --- RUNNING PERMISSION TEST ---")
 	test_file_path = os.path.join(BASE_DIR, "permission_test.txt")
 	try:
 		with open(test_file_path, "w") as f:
 		    f.write("This is a test.")
-		print(f"[SUCCESS] Successfully wrote to {test_file_path}")
 		os.remove(test_file_path) # Clean up the test file
 	except Exception as e:
 		print(f"[FATAL PERMISSION ERROR] Could not write to directory {BASE_DIR}")
 		print(f"The error was: {e}")
 		sys.exit(1) # Stop the script immediately
-	print("[DEBUG] --- PERMISSION TEST PASSED ---\n")
-    # --- END OF PERMISSION TEST BLOCK ---
 
 	print("[DEBUG] About to create slideNumberToSampleName.txt...") # This line should already be here
 	util.writeSlideNumberSampleNameToFile(BASE_DIR, num_train_images, train_images)
@@ -1538,10 +1489,6 @@ def preprocess_images (project, projectPath, max_cpu, save_top_tiles=True, save_
                             ".ndpi", ".vms", ".vmu", ".scn",
                             ".mrxs", ".svslide", ".bif")
 
-#
-# # 	SRC_TRAIN_EXT = "svs"
-# 	SRC_TRAIN_EXT = "ndpi"
-# 	#SRC_TRAIN_EXT = "jpg"
 
 	if max_cpu:
 		maxProcessors = max_cpu
