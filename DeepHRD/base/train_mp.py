@@ -197,100 +197,84 @@ def inference(loader, model, criterion, enable_dropout_flag = False):
     # probs for all tiles + the mean loss
     return all_probs, mean_loss
 
-def train_epoch(run, loader, model, criterion, criterion_supcon,
-                optimizer, lambda_reg, device, scaler):
-
+def train_epoch(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg, device, scaler):
     model.train()
     running_loss, running_inst, total_samples = 0.0, 0.0, 0
     all_targets, all_preds = [], []
 
+    # Buffers to hold samples from PREVIOUS batches (detached)
     supcon_buffer_feats = []
     supcon_buffer_labels = []
 
-    def flush_supcon_buffer():
-        """Runs SupCon on accumulated features and clears buffer."""
-        nonlocal running_inst
-
-        if lambda_reg <= 0 or len(supcon_buffer_feats) == 0:
-            return torch.tensor(0.0, device=device)
-
-        b_feats = torch.cat(supcon_buffer_feats)
-        b_labels = torch.cat(supcon_buffer_labels)
-
-        # Need at least 2 classes
-        if len(torch.unique(b_labels)) < 2:
-            supcon_buffer_feats.clear()
-            supcon_buffer_labels.clear()
-            return torch.tensor(0.0, device=device)
-
-        inst_loss = criterion_supcon(b_feats, b_labels)
-
-        supcon_buffer_feats.clear()
-        supcon_buffer_labels.clear()
-
-        return inst_loss
-
-    for i, (input, target, _) in tqdm.tqdm(
-        enumerate(loader),
-        total=len(loader),
-        desc=f"TRAIN EP {run}"
-    ):
-
+    for i, (input, target, _) in tqdm.tqdm(enumerate(loader), total=len(loader), desc=f"TRAIN EP {run}"):
         input, target = input.to(device), target.to(device)
-
+        
         with autocast():
+            # 1. Forward Pass
             logits, _, proj_feats = model(input)
-
-            # Normalize projection features (important for SupCon)
+            
+            # 2. Representation Normalization (Critical for SupCon)
+            # This projects features onto a unit hypersphere
             proj_feats = torch.nn.functional.normalize(proj_feats, dim=1)
-
+            
+            # 3. Primary Classification Loss
             loss_cls = criterion(logits, target)
 
-            # ---- Collect definitive samples ----
-            definitive_mask = (target[:, 0] < 0.3) | (target[:, 0] > 0.7)
-
-            if definitive_mask.any():
-                supcon_buffer_feats.append(proj_feats[definitive_mask])
-                supcon_buffer_labels.append(
-                    torch.argmax(target[definitive_mask], dim=1)
-                )
-
+            # 4. SupCon Management
             inst_loss = torch.tensor(0.0, device=device)
+            if lambda_reg > 0:
+                # Find "definitive" samples in the CURRENT batch
+                definitive_mask = (target[:, 0] < 0.3) | (target[:, 0] > 0.7)
+                
+                if definitive_mask.any():
+                    curr_feats = proj_feats[definitive_mask]
+                    curr_labels = torch.argmax(target[definitive_mask], dim=1)
 
-            if (i + 1) % 8 == 0:
-                inst_loss = flush_supcon_buffer()
+                    # Combine current batch (attached) with buffer (detached)
+                    # This increases the pool of negatives/positives to compare against
+                    if len(supcon_buffer_feats) > 0:
+                        # We use the current features (graph attached) 
+                        # + all past features in buffer (detached)
+                        all_feats = torch.cat([curr_feats] + supcon_buffer_feats)
+                        all_labels = torch.cat([curr_labels] + supcon_buffer_labels)
+                        
+                        if len(torch.unique(all_labels)) > 1:
+                            inst_loss = criterion_supcon(all_feats, all_labels)
 
+                    # Update Buffer: Store the current features but DETACH them
+                    # so they don't cause the "backward through graph" error in the next batch
+                    supcon_buffer_feats.append(curr_feats.detach())
+                    supcon_buffer_labels.append(curr_labels.detach())
+
+            # 5. Combined Loss
             loss = (1 - lambda_reg) * loss_cls + lambda_reg * inst_loss
 
+        # 6. Optimization Step
         optimizer.zero_grad()
         scaler.scale(loss).backward()
+        
+        # Gradient Clipping (prevents spikes during unfreezing)
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        
         scaler.step(optimizer)
         scaler.update()
 
+        # 7. Buffer Maintenance
+        # Don't let the buffer grow forever; keep it to the last 4-8 batches
+        if len(supcon_buffer_feats) > 8:
+            supcon_buffer_feats.pop(0)
+            supcon_buffer_labels.pop(0)
+
+        # Metrics Tracking
         running_loss += loss.item() * input.size(0)
         running_inst += inst_loss.item() * input.size(0)
         total_samples += input.size(0)
-
         all_targets.append(torch.argmax(target, dim=1).cpu())
         all_preds.append(torch.argmax(logits, dim=1).cpu())
-    with autocast():
-        inst_loss = flush_supcon_buffer()
-
-        if inst_loss.item() > 0:
-            optimizer.zero_grad()
-            scaler.scale(lambda_reg * inst_loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
 
     acc = accuracy_score(torch.cat(all_targets), torch.cat(all_preds))
-
-    return (
-        running_loss / total_samples,
-        running_inst / total_samples,
-        acc
-    )
+    return running_loss / total_samples, running_inst / total_samples, acc
 
 
 # ================= TRAIN LOOP ==================
