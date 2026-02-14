@@ -419,6 +419,7 @@ def main():
             optimizer = torch.optim.Adam(get_optimizer_groups(model, args.lr, args.wd))
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs - epoch)
         current_lambda = min(args.lambda_sup, (epoch / 10) * args.lambda_sup) if epoch < 10 else args.lambda_sup
+        train_dset.preselect_epoch_slides(sampling_mode=args.sampling_mode)
         train_dset.modelState(1)
         train_dset.setTransforms(infer_train_transforms)
         infer_loader = torch.utils.data.DataLoader(
