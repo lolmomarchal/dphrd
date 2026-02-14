@@ -76,7 +76,7 @@ def set_unfreezing_stage(model, stage=0):
         param.requires_grad = False
     
     # Always unfreeze Heads (Classifier + Projection)
-    for param in model.classifier.parameters(): param.requires_grad = True
+    for param in model.resnet.fc.parameters(): param.requires_grad = True
     for param in model.projection_head.parameters(): param.requires_grad = True
 
     if stage >= 1:
