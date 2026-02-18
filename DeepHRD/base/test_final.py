@@ -238,7 +238,8 @@ def inference (modelNumber, reps, t, loader, model):
 			input = input.to(device)
 			target = target.to(device)
 			a_hook = model.resnet.avgpool.register_forward_hook(my_hook)
-			output = F.softmax(model(input), dim=1)
+			logits,_,_ = model(input)
+			output = F.softmax(logits, dim=1)
 			a_hook.remove()
 			allFeatures += [[x[0][0] for x in y] for y in instance_features.cpu().numpy()]
 			probs[i*args.batch_size:i*args.batch_size+input.size(0)] = output.detach()[:,1].clone()
