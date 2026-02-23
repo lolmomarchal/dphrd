@@ -309,7 +309,7 @@ def main():
     cudnn.benchmark = True
     model = RNN(args.dropoutRate).to(device)
     if args.checkpoint:
-        model.load_state_dict(torch.load(args.checkpoint)["state_dict"])
+        model.load_state_dict(torch.load(args.checkpoint)["state_dict"],strict=False)
     # staging 
     current_stage = 3 if args.start_unfrozen else 0
     set_unfreezing_stage(model, stage=current_stage)
