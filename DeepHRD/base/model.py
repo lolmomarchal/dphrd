@@ -42,6 +42,6 @@ class ResNet_dropout(nn.Module):
         features = torch.flatten(x, 1)
 
         logits = self.resnet.fc(features)
-        projected_features = 0
+        projected_features = self.projection_head(features)
         
         return logits, features, projected_features
