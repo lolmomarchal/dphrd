@@ -1,13 +1,13 @@
 import torch
 import torch.nn as nn
 import torchvision
-from torchvision.models import ResNet34_Weights
+from torchvision.models import ResNet18_Weights
 
 class ResNet_dropout(nn.Module):
     def __init__(self, dropoutRate=0.5):
         super(ResNet_dropout, self).__init__()
         self.dropoutRate = dropoutRate
-        self.resnet = torchvision.models.resnet34(weights=ResNet34_Weights.IMAGENET1K_V1)
+        self.resnet = torchvision.models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
 
         in_features = self.resnet.fc.in_features
         
