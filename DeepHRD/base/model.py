@@ -17,13 +17,13 @@ class ResNet_dropout(nn.Module):
             nn.Linear(in_features, 2)
         )
 
-        # Contrastive Projection Head
-        projection_dim = 128
-        self.projection_head = nn.Sequential(
-            nn.Linear(in_features, projection_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(projection_dim, projection_dim)
-        )
+        # # Contrastive Projection Head
+        # projection_dim = 128
+        # self.projection_head = nn.Sequential(
+        #     nn.Linear(in_features, projection_dim),
+        #     nn.ReLU(inplace=True),
+        #     nn.Linear(projection_dim, projection_dim)
+        # )
 
     def forward(self, x):
         # To get features for SupCon, we need to hook into the layer before FC
@@ -42,6 +42,6 @@ class ResNet_dropout(nn.Module):
         features = torch.flatten(x, 1)
 
         logits = self.resnet.fc(features)
-        projected_features = self.projection_head(features)
+        projected_features = 0
         
         return logits, features, projected_features
