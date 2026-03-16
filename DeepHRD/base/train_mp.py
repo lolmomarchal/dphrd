@@ -145,11 +145,12 @@ def enable_dropout(model):
         if m.__class__.__name__.startswith('Dropout'):
             m.train()
 
-def inference(loader, model, criterion, enable_dropout_flag = False):
+def inference(loader, model, criterion, enable_dropout_flag=False):
     model.eval()
     if len(loader.dataset) == 0:
         print("[WARNING] Warning: Inference dataset is empty.")
         return np.array([]), 0.0
+    
     if enable_dropout_flag:
         print("[INFO] inference is running with ENABLED dropout for top-k selection")
         enable_dropout(model)
@@ -157,44 +158,32 @@ def inference(loader, model, criterion, enable_dropout_flag = False):
     probs_list = []
     running_loss = 0.0
     total_samples = 0
-    slide_outputs = {}
 
-    with torch.no_grad():
+    with torch.inference_mode(): 
         for i, batch in tqdm.tqdm(enumerate(loader), total=len(loader), desc="[INFERENCE]"):
-            input, target, slide_ids = batch
-            input = input.to(device)
-            target = target.to(device)
+            input, target, _ = batch 
+            
+            input = input.to(device, non_blocking=True)
+            target = target.to(device, non_blocking=True)
+            
             batch_size = input.size(0)
             total_samples += batch_size
-            if device == "cuda":
-                with autocast(): #run with autocast bc we dont care as much about FP16 v FP32 for simple prediction
-                    logits,_, _ = model(input)
-                    output = F.softmax(logits, dim=1)
+            
+            if device.type == "cuda":
+                with autocast():
+                    logits, _, _ = model(input)
                     loss = criterion(logits, target)
             else:
-                logits,_,_ = model(input)
-                output = F.softmax(logits, dim=1)
+                logits, _, _ = model(input)
                 loss = criterion(logits, target)
 
+            probs = F.softmax(logits, dim=1)[:, 1]
             running_loss += loss.item() * batch_size
-            probs_list.append(output.detach()[:, 1].clone().cpu())
+            probs_list.append(probs.cpu())
 
-            for sid, t, p in zip(slide_ids.cpu().numpy(), target.cpu(), output[:, 1].cpu()):
-                sid_key = int(sid)
-                if sid_key not in slide_outputs:
-                    slide_outputs[sid_key] = {"probs": [], "target": t}
-                slide_outputs[sid_key]["probs"].append(p.item())
+    mean_loss = running_loss / total_samples if total_samples > 0 else 0.0
+    all_probs = torch.cat(probs_list, dim=0).numpy() if probs_list else np.array([])
 
-    if total_samples == 0:
-        mean_loss = 0.0
-    else:
-        mean_loss = running_loss / total_samples
-    if not probs_list:
-        all_probs = np.array([])
-    else:
-        all_probs = torch.cat(probs_list, dim=0).numpy()
-
-    # probs for all tiles + the mean loss
     return all_probs, mean_loss
 
 def train_epoch(run, loader, model, criterion, criterion_supcon, optimizer, lambda_reg, device, scaler):
