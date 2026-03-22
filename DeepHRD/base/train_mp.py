@@ -371,7 +371,7 @@ def main():
         criterion = FocalLossWithProbs(alpha=alpha_w, gamma=args.focal_gamma).to(device, non_blocking= True )
     # =============================== NORMALIZERS & TRANSFORMS
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    trans = transforms.Compose([transforms.RandomHorizontalFlip(),transforms.RandomVerticalFlip(),
+    trans = transforms.Compose([transforms.RandomHorizontalFlip(),transforms.RandomVerticalFlip()
         ,transforms.ColorJitter(
         brightness=0.15,
         contrast=0.15,
