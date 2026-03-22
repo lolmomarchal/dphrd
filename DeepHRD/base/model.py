@@ -17,17 +17,16 @@ class ResNet_dropout(nn.Module):
             nn.Linear(in_features, 2)
         )
 
-        # # Contrastive Projection Head
+        # Contrastive Projection Head
         projection_dim = 128
         self.projection_head = nn.Sequential(
             nn.Linear(in_features, projection_dim),
+            nn.BatchNorm1d(projection_dim),  
             nn.ReLU(inplace=True),
             nn.Linear(projection_dim, projection_dim)
         )
 
     def forward(self, x):
-        # To get features for SupCon, we need to hook into the layer before FC
-        # ResNet34 usually provides 512 features before the FC layer.
         x = self.resnet.conv1(x)
         x = self.resnet.bn1(x)
         x = self.resnet.relu(x)
