@@ -138,7 +138,47 @@ class FocalLossWithProbs(nn.Module):
         else:
             raise ValueError(f"Invalid reduction: {self.reduction}")
 
+class SoftSupConLoss(nn.Module):
+    def __init__(self, temperature=0.1):
+        super().__init__()
+        self.temperature = temperature
 
+    def forward(self, features, soft_labels):
+        device = features.device
+        batch_size = features.shape[0]
+
+        # Compute feature similarity matrix
+        anchor_dot_contrast = torch.div(
+            torch.matmul(features, features.T),
+            self.temperature
+        )
+
+        # For numerical stability
+        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
+        logits = anchor_dot_contrast - logits_max.detach()
+
+        # Create the Soft Mask based on label similarity (dot product of soft distributions)
+        soft_mask = torch.matmul(soft_labels, soft_labels.T)
+
+        # Mask out self-contrast (we don't want an image to contrast with itself)
+        logits_mask = torch.scatter(
+            torch.ones_like(soft_mask),
+            1,
+            torch.arange(batch_size).view(-1, 1).to(device),
+            0
+        )
+        soft_mask = soft_mask * logits_mask
+
+        # Compute log probabilities
+        exp_logits = torch.exp(logits) * logits_mask
+        log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) + 1e-8)
+
+        # Weight the log_prob by the soft_mask and compute the mean
+        mean_log_prob_pos = (soft_mask * log_prob).sum(1) / (soft_mask.sum(1) + 1e-8)
+
+        # Final loss
+        loss = -mean_log_prob_pos
+        return loss.mean()
 # ================= EVAL AND TRAIN METHODS =================================================
 def enable_dropout(model):
     for m in model.modules():
@@ -197,43 +237,36 @@ def train_epoch(run, loader, model, criterion, criterion_supcon, optimizer, lamb
 
     for i, (input, target, _) in tqdm.tqdm(enumerate(loader), total=len(loader), desc=f"TRAIN EP {run}"):
         input, target = input.to(device), target.to(device)
+        batch_size = input.size(0)
         
         with autocast():
             # 1. Forward Pass
             logits, _, proj_feats = model(input)
             
-            # 2. Representation Normalization (Critical for SupCon)
-            # This projects features onto a unit hypersphere
+            # 2. Representation Normalization
             proj_feats = torch.nn.functional.normalize(proj_feats, dim=1)
             
             # 3. Primary Classification Loss
             loss_cls = criterion(logits, target)
 
-            # 4. SupCon Management
+            # 4. Soft SupCon Management
             inst_loss = torch.tensor(0.0, device=device)
+            
             if lambda_reg > 0:
-                # Find "definitive" samples in the CURRENT batch
-                definitive_mask = (target[:, 0] < 0.3) | (target[:, 0] > 0.7)
+                # Combine current batch (attached) with buffer (detached)
+                if len(supcon_buffer_feats) > 0:
+                    all_feats = torch.cat([proj_feats] + supcon_buffer_feats, dim=0)
+                    all_labels = torch.cat([target] + supcon_buffer_labels, dim=0)
+                else:
+                    all_feats = proj_feats
+                    all_labels = target
                 
-                if definitive_mask.any():
-                    curr_feats = proj_feats[definitive_mask]
-                    curr_labels = torch.argmax(target[definitive_mask], dim=1)
+                # Calculate Soft SupCon on ALL tiles (no hard mask needed!)
+                inst_loss = criterion_supcon(all_feats, all_labels)
 
-                    # Combine current batch (attached) with buffer (detached)
-                    # This increases the pool of negatives/positives to compare against
-                    if len(supcon_buffer_feats) > 0:
-                        # We use the current features (graph attached) 
-                        # + all past features in buffer (detached)
-                        all_feats = torch.cat([curr_feats] + supcon_buffer_feats)
-                        all_labels = torch.cat([curr_labels] + supcon_buffer_labels)
-                        
-                        if len(torch.unique(all_labels)) > 1:
-                            inst_loss = criterion_supcon(all_feats, all_labels)
-
-                    # Update Buffer: Store the current features but DETACH them
-                    # so they don't cause the "backward through graph" error in the next batch
-                    supcon_buffer_feats.append(curr_feats.detach())
-                    supcon_buffer_labels.append(curr_labels.detach())
+                # Update Buffer: Store current features but DETACH them
+                supcon_buffer_feats.append(proj_feats.detach())
+                supcon_buffer_labels.append(target.detach())
 
             # 5. Combined Loss
             loss = (1 - lambda_reg) * loss_cls + lambda_reg * inst_loss
@@ -242,7 +275,7 @@ def train_epoch(run, loader, model, criterion, criterion_supcon, optimizer, lamb
         optimizer.zero_grad()
         scaler.scale(loss).backward()
         
-        # Gradient Clipping (prevents spikes during unfreezing)
+        # Gradient Clipping
         scaler.unscale_(optimizer)
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         
@@ -250,15 +283,15 @@ def train_epoch(run, loader, model, criterion, criterion_supcon, optimizer, lamb
         scaler.update()
 
         # 7. Buffer Maintenance
-        # Don't let the buffer grow forever; keep it to the last 4-8 batches
+        # Keep buffer limited to the last 8 batches (Memory Bank size = 8 * batch_size)
         if len(supcon_buffer_feats) > 8:
             supcon_buffer_feats.pop(0)
             supcon_buffer_labels.pop(0)
 
         # Metrics Tracking
-        running_loss += loss.item() * input.size(0)
-        running_inst += inst_loss.item() * input.size(0)
-        total_samples += input.size(0)
+        running_loss += loss.item() * batch_size
+        running_inst += inst_loss.item() * batch_size
+        total_samples += batch_size
         all_targets.append(torch.argmax(target, dim=1).cpu())
         all_preds.append(torch.argmax(logits, dim=1).cpu())
 
@@ -305,7 +338,7 @@ def main():
     # optimizers 
     optimizer = torch.optim.Adam(get_optimizer_groups(model, args.lr, args.wd))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    criterion_supcon = losses.SupConLoss(temperature=0.1).to(device)
+    criterion_supcon = SoftSupConLoss(temperature=0.1).to(device)
     criterion = SoftCrossEntropyLoss().to(device)
   
     # 4. Initiate criterion, optimizer
@@ -339,13 +372,13 @@ def main():
     # =============================== NORMALIZERS & TRANSFORMS
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     trans = transforms.Compose([transforms.RandomHorizontalFlip(),transforms.RandomVerticalFlip(),
-    transforms.RandomRotation(90),transforms.ColorJitter(
-        brightness=0.1,
-        contrast=0.1,
-        saturation=0.05,
-        hue=0.02 ), transforms.GaussianBlur(
+        ,transforms.ColorJitter(
+        brightness=0.15,
+        contrast=0.15,
+        saturation=0.1,
+        hue=0.03 ), transforms.GaussianBlur(
         kernel_size=3,
-        sigma=(0.1, 0.6)),transforms.ToTensor(),normalize
+        sigma=(0.1, 0.3)),transforms.ToTensor(),normalize
     ])
 
     infer_trans = transforms.Compose([
